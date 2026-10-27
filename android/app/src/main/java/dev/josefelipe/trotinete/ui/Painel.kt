@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.josefelipe.trotinete.dados.Configuracao
 import dev.josefelipe.trotinete.dados.Definicoes
 import dev.josefelipe.trotinete.protocolo.P
 import dev.josefelipe.trotinete.servico.Comando
@@ -97,7 +99,14 @@ fun Painel(defs: Definicoes, ligar: () -> Unit, desligar: () -> Unit, abrirAjust
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                e.aviso?.let { Aviso(it) }
+                e.aviso?.let { aviso ->
+                    // Chave recusada logo a seguir à configuração = quase sempre o PIN mal escrito.
+                    val pinErrado = "PIN errado" in aviso
+                    Aviso(aviso, if (pinErrado) "Escrever o PIN de novo" else null) {
+                        Configuracao.repetirPin()
+                        abrirAjustes()
+                    }
+                }
                 when (aba) {
                     Aba.INICIO -> AbaInicio(e)
                     Aba.CONTROLO -> AbaControlo(e, defs, desligar)
@@ -199,10 +208,15 @@ private fun barras(rssi: Int) = when {
 }
 
 @Composable
-private fun Aviso(texto: String) {
-    Box(
+private fun Aviso(texto: String, acao: String? = null, fazer: () -> Unit = {}) {
+    Column(
         Modifier.fillMaxWidth().vidro(16.dp, cor = Ambar.copy(alpha = 0.10f)).padding(14.dp),
-    ) { Text(texto, color = Ambar, fontSize = 14.sp) }
+    ) {
+        Text(texto, color = Ambar, fontSize = 14.sp)
+        if (acao != null) {
+            TextButton(onClick = fazer, contentPadding = PaddingValues(0.dp)) { Text(acao, color = Ambar, fontWeight = FontWeight.SemiBold) }
+        }
+    }
 }
 
 // --- Início ---

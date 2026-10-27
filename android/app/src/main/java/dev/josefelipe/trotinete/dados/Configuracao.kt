@@ -41,19 +41,26 @@ sealed interface Passo {
     data object AProcurar : Passo
     data class Escolher(val trotinetes: List<TrotineteNaConta>) : Passo
     data class PedirPin(val mac: String, val cifrada: ByteArray) : Passo
+
+    /** A Xiaomi não deu o MAC desta trotinete: só então é preciso ler o QR do autocolante. */
+    data class PedirQr(val trotinete: TrotineteNaConta) : Passo
     data class Erro(val mensagem: String) : Passo
     data object Concluido : Passo
 }
 
 /**
- * Configuração pela conta Xiaomi: login no browser -> encontrar a trotinete -> pedir a chave -> PIN.
- * Vive fora do ecrã para sobreviver à ida ao browser.
+ * Configuração pela conta Xiaomi: login (janela dentro da app) -> encontrar a trotinete -> pedir a chave -> PIN.
+ * O QR do autocolante é opcional: só serve se a Xiaomi não der o MAC ou para escolher entre várias.
  */
 object Configuracao {
     private const val TAG = "Trotinete"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _passo = MutableStateFlow<Passo>(Passo.Inicio)
     val passo: StateFlow<Passo> = _passo
+
+    /** Chamado quando a Xiaomi confirma o login, para a app voltar à frente do separador do Chrome. */
+    @Volatile
+    var aoEntrar: (() -> Unit)? = null
 
     /** Sessão da tentativa que chegou ao fim do login; [escolher] e [usarPin] usam esta. */
     private var conta: ContaXiaomi? = null
@@ -83,6 +90,7 @@ object Configuracao {
                 _passo.value = Passo.AbrirLogin(url)
                 c.esperarLogin { isActive }
                 ensureActive()
+                aoEntrar?.invoke()
                 conta = c
                 _passo.value = Passo.AProcurar
                 val lista = c.procurarTrotinetes()
@@ -118,13 +126,30 @@ object Configuracao {
 
     private fun obterChave(c: ContaXiaomi, defs: Definicoes, t: TrotineteNaConta, macDoQr: String?) {
         val mac = t.mac ?: macDoQr ?: defs.mac
-            ?: throw ContaException("A Xiaomi não deu o MAC: lê o QR da trotinete primeiro")
+        if (mac == null) {
+            _passo.value = Passo.PedirQr(t)
+            return
+        }
         val (chave, precisaPin) = c.pedirChave(t.servidor, t.did)
         Log.i(TAG, "Chave recebida (${chave.size} bytes, PIN=${precisaPin})")
         if (precisaPin) {
             _passo.value = Passo.PedirPin(mac, chave)
         } else {
             guardar(defs, mac, chave)
+        }
+    }
+
+    /** Depois de [Passo.PedirQr]: continua com o MAC lido do QR, sem repetir o login. */
+    fun usarMacDoQr(defs: Definicoes, mac: String) {
+        val p = _passo.value as? Passo.PedirQr ?: return
+        val c = conta ?: return
+        _passo.value = Passo.AProcurar
+        trabalho = scope.launch {
+            try {
+                obterChave(c, defs, p.trotinete, mac)
+            } catch (e: Exception) {
+                falhou(e)
+            }
         }
     }
 

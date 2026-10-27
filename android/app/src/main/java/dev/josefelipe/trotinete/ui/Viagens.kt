@@ -72,6 +72,7 @@ fun AbaViagens(e: Estado, defs: Definicoes) {
 
     Gravacao(e, defs)
     if (viagens.isNotEmpty()) Resumo(viagens, defs.precoKwh)
+    ConsumoPorModo(viagens)
 
     var aberta by rememberSaveable { mutableStateOf<Long?>(null) }
     viagens.forEach { v ->
@@ -132,6 +133,31 @@ private fun Gravacao(e: Estado, defs: Definicoes) {
             Spacer(Modifier.width(8.dp))
             Text("Terminar e guardar")
         }
+    }
+}
+
+/** Bateria da Scooter 5: 477 Wh segundo a Xiaomi. */
+private const val BATERIA_WH = 477.0
+
+/** Wh/km de cada modo nas tuas viagens, para escolher o modo com dados. Só aparece com 2 modos medidos. */
+@Composable
+private fun ConsumoPorModo(viagens: List<ViagemGps>) {
+    val porModo = viagens.filter { it.modo != null && it.km >= 0.3 && it.wh > 0 }
+        .groupBy { it.modo!! }
+        .mapNotNull { (modo, lista) ->
+            val km = lista.sumOf { it.km }
+            NOMES_MODO[modo]?.let { Triple(it, km, lista.sumOf { v -> v.wh } / km) }
+        }
+        .sortedBy { it.third }
+    if (porModo.size < 2) return
+    Cartao(titulo = "Consumo por modo") {
+        porModo.forEach { (nome, km, whKm) ->
+            Linha("$nome · ${km.fmt("km", 0)}", "${whKm.fmt("Wh/km", 0)} · ~${(BATERIA_WH / whKm).fmt("km", 0)}/carga")
+        }
+        Text(
+            "Autonomia estimada com a bateria cheia (477 Wh), ao teu ritmo e no teu percurso.",
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

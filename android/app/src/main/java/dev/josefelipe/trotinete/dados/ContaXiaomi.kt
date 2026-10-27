@@ -19,7 +19,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-class ContaException(msg: String) : Exception(msg)
+open class ContaException(msg: String) : Exception(msg)
 
 /** Trotinete associada à conta Xiaomi. */
 data class TrotineteNaConta(val servidor: String, val did: String, val modelo: String?, val nome: String?, val mac: String?)
@@ -129,10 +129,14 @@ class ContaXiaomi {
             if (System.currentTimeMillis() - inicio > tempoLimite * 1000) throw ContaException("O tempo para iniciar sessão acabou; tenta de novo")
             try {
                 espera.newCall(Request.Builder().url(lp).build()).execute().use { r ->
-                    if (r.isSuccessful) dados = json(r.body?.string() ?: "")
+                    if (r.isSuccessful) dados = json(r.body?.string() ?: "") else Thread.sleep(1_500)
                 }
             } catch (e: SocketTimeoutException) {
                 // ainda à espera do login: volta a perguntar
+            } catch (e: IOException) {
+                // Com a página da Xiaomi à frente, o Android pode congelar a app e cortar esta ligação
+                // (na Motorola: "moto_freezer"). Não é erro: o login fica guardado e apanhamo-lo ao voltar.
+                Thread.sleep(1_500)
             }
         }
         val d = dados!!

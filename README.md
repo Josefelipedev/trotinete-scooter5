@@ -1,145 +1,139 @@
-# Trotinete: app aberta para a Xiaomi Electric Scooter 5
+# Trotinete: open app for the Xiaomi Electric Scooter 5
 
-App Android **não oficial** para controlar a Xiaomi Electric Scooter 5 sem a Mi Home. Inclui **bloqueio automático quando te afastas**, que a app da Xiaomi não tem.
+**English** · [Português](README.pt.md)
+
+An **unofficial** Android app to control the Xiaomi Electric Scooter 5 without Mi Home. It adds a feature the Xiaomi app doesn't have: **automatic locking when you walk away**.
 
 <p align="center">
-  <img src="docs/painel.png" width="270" alt="Painel principal">
+  <img src="docs/painel.png" width="270" alt="Main dashboard">
   &nbsp;&nbsp;
-  <img src="docs/detalhes.png" width="270" alt="Detalhes da bateria e da trotinete">
+  <img src="docs/detalhes.png" width="270" alt="Battery and scooter details">
 </p>
 
-**[⬇️ Descarregar a APK (Releases)](../../releases/latest)** · Android 10 ou mais recente
-
-> 🇬🇧 *Unofficial, open-source Android app for the Xiaomi Electric Scooter 5: dashboard, lock/unlock, proximity auto-lock (never while riding), trip recording and battery health, all without Mi Home. The UI is in Portuguese. See [English summary](#english-summary).*
+**[⬇️ Download the APK (Releases)](../../releases/latest)** · Android 10 or newer · *The app's interface is in Portuguese (European).*
 
 ---
 
-## O que faz
+## Features
 
 | | |
 |---|---|
-| 🔋 **Painel** | Bateria, autonomia, potência em tempo real, voltagem, km da viagem e total |
-| 🔒 **Bloquear / desbloquear** | Com um toque |
-| 📡 **Bloqueio por afastamento** | Bloqueia sozinha quando o telemóvel se afasta e desbloqueia quando voltas (só se foi a app a bloquear) |
-| 🛡️ **Segurança** | **Nunca bloqueia em andamento**: antes de bloquear, volta a confirmar na trotinete que está parada e que gasta pouca energia |
-| 💡 **Luz traseira, modos, Encontrar** | Luz sempre acesa, Walk/Drive/Sport, apito para a encontrar |
-| ⚙️ **Condução** | Travagem regenerativa, cruise control, controlo de tração e outras opções que a trotinete aceita |
-| 🗺️ **Viagens** | Gravação automática com GPS: percurso, km, energia gasta e custo em € |
-| 🔔 **Avisos de bateria** | Por exemplo "chegou aos 90%": parar a carga nos 80–90% faz a bateria durar mais anos |
-| 🩺 **Saúde da bateria** | Ciclos, saúde e temperaturas, mais um histórico ao longo do tempo |
+| 🔋 **Dashboard** | Battery, range, live power, voltage, trip and total km |
+| 🔒 **Lock / unlock** | One tap |
+| 📡 **Proximity auto-lock** | Locks by itself when your phone walks away and unlocks when you come back (only if the app locked it) |
+| 🛡️ **Safety** | **Never locks while riding**: before locking, it re-checks on the scooter itself that it is stopped and drawing little power |
+| 💡 **Tail light, modes, Find** | Tail light always on, Walk/Drive/Sport, beep to find it |
+| ⚙️ **Riding settings** | Regenerative braking, cruise control, traction control and other options the scooter accepts |
+| 🗺️ **Trips** | Automatic GPS recording: route, distance, energy used and cost in €, plus **consumption per mode** (Wh/km and estimated range in Drive vs Sport) |
+| 🚦 **Speed alert** | The phone vibrates and beeps above a speed you choose (GPS), handy in 20 km/h zones |
+| 🌱 **Automatic eco mode** | With low battery, switches from Sport to Drive so you get home, always at the next stop, never while riding |
+| 🔔 **Battery alerts** | For example "reached 90%": stopping the charge at 80–90% makes the battery last more years |
+| 🩺 **Battery health** | Charge cycles, health and temperatures, plus a history over time |
 
-### O que **não** faz (de propósito)
+### What it does **not** do (on purpose)
 
-- **Não mexe nos limites de velocidade.** O limite de 25 km/h é legal e de segurança. Essas propriedades estão bloqueadas no código.
-- **Não liga a luz da frente.** A Scooter 5 só a liga no botão físico, não aceita esse comando por Bluetooth.
-- **Não instala firmware.** O firmware da Xiaomi é assinado. A app não lhe toca.
+- **It doesn't touch speed limits.** The 25 km/h limit is a legal and safety limit. Those properties are blocked in the code.
+- **It doesn't turn on the front light.** The Scooter 5 only accepts that from the physical button, not over Bluetooth.
+- **It doesn't install firmware.** Xiaomi's firmware is signed. The app doesn't go near it.
 
 ---
 
-## Antes de instalar
+## Before installing
 
-1. **A trotinete tem de estar associada na Mi Home** (a tua conta Xiaomi). A chave Bluetooth da trotinete é criada pela Xiaomi nessa associação e não há outra forma de a obter.
-2. **Não removas a trotinete da Mi Home.** Se a voltares a associar, a chave muda e tens de repetir a configuração na app.
-3. Basta a app ir buscar a chave **uma vez**. Depois funciona sem internet e sem a Mi Home.
+1. **The scooter must be paired in Mi Home** (your Xiaomi account). Xiaomi creates the scooter's Bluetooth key when you pair it, and there is no other way to get that key.
+2. **Don't remove the scooter from Mi Home.** If you pair it again, the key changes and you have to set up the app again.
+3. The app only needs to fetch the key **once**. After that it works without internet and without Mi Home.
 
-## Instalar
+## Install
 
-1. Descarrega `trotinete-x.y.z.apk` em [Releases](../../releases/latest).
-2. Abre o ficheiro no telemóvel. O Android pede para permitir a instalação de "fontes desconhecidas": aceita só para este ficheiro.
-3. Abre a app:
-   - **Lê o QR** do autocolante da trotinete (ou cola o link `home.mi.com/...`).
-   - **Entra com a conta Xiaomi**. O login é feito na página oficial da Xiaomi e serve só para ir buscar a chave. Se a trotinete tiver PIN, a app pede-o.
-4. Pronto: a app liga-se sozinha à trotinete sempre que está por perto.
+1. Download `trotinete-x.y.z.apk` from [Releases](../../releases/latest).
+2. Open the file on your phone. Android will ask you to allow installing from "unknown sources": allow it just for this file.
+3. Open the app and tap **Entrar com a conta Xiaomi** ("Sign in with your Xiaomi account"):
+   - Xiaomi's official login page opens **on top of the app** (a browser tab, like "Sign in with Google"), with no links to copy.
+   - When you sign in, you're brought back to the app and it finds the scooter in your account. If you have several, it asks which one.
+   - If your scooter has a PIN, the app asks for it.
+   - The app only asks you to scan the QR sticker if Xiaomi doesn't return the scooter's Bluetooth address.
+4. Done: the app connects to the scooter by itself whenever it's nearby.
 
-> **Bloqueio automático:** para funcionar com o ecrã desligado, aceita o pedido para a app **não ser otimizada pela bateria**. Senão o Android pode pará-la em segundo plano.
+> **Auto-lock:** for it to work with the screen off, accept the prompt to **exclude the app from battery optimisation**. Otherwise Android may stop it in the background.
 
-## Afinar o bloqueio por afastamento
+## Tuning the proximity auto-lock
 
-Em **Controlo → Segurança**:
+In **Controlo → Segurança** (Controls → Safety):
 
-- **Limiar (dBm):** quanto mais à esquerda, mais longe tens de ir para ela bloquear. Por omissão está em **−78 dBm**, afinado numa casa real: ao lado da trotinete o sinal anda entre −62 e −75, e a 15–20 m desce para −83 a −89.
-- **Segundos:** quanto tempo de sinal fraco antes de bloquear. Uma queda brusca de sinal (por exemplo ao fechar a porta) bloqueia logo.
-- **Desbloquear quando volto:** desbloqueia com sinal acima de limiar + 10 dBm durante 2 s, e só se foi a app que bloqueou. Um bloqueio teu à mão nunca é desfeito pela app.
+- **Threshold (dBm):** the further left, the further away you have to go before it locks. The default is **−78 dBm**, tuned in a real home: next to the scooter the signal is −62 to −75, and at 15–20 m it drops to −83 to −89.
+- **Seconds:** how long the signal must stay weak before locking. A sudden drop in signal (for example when you close the door) locks it right away.
+- **Unlock when I come back:** unlocks when the signal stays above threshold + 10 dBm for 2 s, and only if the app was the one that locked it. The app never undoes a lock you made by hand.
 
-O ecrã mostra o **sinal atual**. Afasta-te devagar e vê os números para escolher o teu limiar.
+The screen shows the **current signal**. Walk away slowly and watch the numbers to pick your own threshold.
 
-⚠️ O sinal Bluetooth varia com paredes, bolsos e o corpo. Isto é uma comodidade e **não substitui um cadeado**.
+⚠️ Bluetooth signal varies with walls, pockets and your body. This is a convenience and **not a replacement for a real lock**.
 
-## Privacidade
+## Privacy
 
-- A chave da trotinete fica **cifrada com o Android Keystore** no teu telemóvel.
-- A internet só é usada no login da Xiaomi, para ir buscar a chave. Não há telemetria, anúncios nem servidores nossos.
-- As viagens (GPS) ficam só no telemóvel.
+- The scooter's key is stored **encrypted with Android Keystore** on your phone.
+- The internet is only used for the Xiaomi login, to fetch the key. No telemetry, no ads, no servers of ours.
+- The login is Xiaomi's official page (`account.xiaomi.com`), shown by your browser: the app never sees your password.
+- Trips (GPS) stay on your phone.
 
-## Modelos testados
+## Tested models
 
-| Modelo | Estado |
+| Model | Status |
 |---|---|
-| Xiaomi Electric Scooter 5 (`xiaomi.scooter.0005`, BLE 2.7.0_0015) | ✅ Testado na trotinete real |
-| Scooter 5 Pro / 5 Max | ❓ Mesmo protocolo, não testado. Diz como correu num *issue*. |
-| Modelos antigos (Pro 2, 3, 4…) | ❌ Usam outro protocolo |
+| Xiaomi Electric Scooter 5 (`xiaomi.scooter.0005`, BLE 2.7.0_0015) | ✅ Tested on a real scooter |
+| Scooter 5 Pro / 5 Max | ❓ Same protocol, not tested. Please report in an *issue*. |
+| Older models (Pro 2, 3, 4…) | ❌ They use a different protocol |
 
-Por confirmar numa volta real: cruise control, ASR, descida assistida e travão em rampa estão na app, mas ainda não foram verificados com a trotinete a andar.
+Still to confirm on a real ride: cruise control, ASR, hill descent assist and hill hold are in the app but haven't been checked with the scooter moving.
 
 ---
 
-## Para programadores
+## For developers
 
 ```
-android/   App Android (Kotlin + Jetpack Compose)
-  protocolo/   Bluetooth MIOT da Xiaomi: login ECDH + AES-CCM, get/set de propriedades
-  servico/     Serviço em primeiro plano: ligação, bloqueio automático, gravação de viagens
-  dados/       Conta Xiaomi (chave), definições, diário da bateria
-  ui/          Ecrãs em Compose
-pc/        Ferramentas em Python (bleak) para estudar a trotinete a partir do PC
+android/   Android app (Kotlin + Jetpack Compose)
+  protocolo/   Xiaomi MIOT over Bluetooth: ECDH login + AES-CCM, property get/set
+  servico/     Foreground service: connection, auto-lock, trip recording
+  dados/       Xiaomi account (key), settings, battery log
+  ui/          Compose screens
+pc/        Python tools (bleak) to study the scooter from a PC
 ```
 
-**Compilar a app:**
+**Build the app:**
 
 ```bash
 cd android
 ./gradlew assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ```
 
-A versão de depuração aceita comandos por adb, que facilitam o estudo do protocolo:
+The debug build accepts commands over adb, which makes studying the protocol easier:
 
 ```bash
 adb shell am broadcast -n dev.josefelipe.trotinete/.servico.Depuracao --es cmd "get 2 4"
 adb logcat Trotinete:* '*:S'
 ```
 
-**Ferramentas do PC** (Linux/macOS/Windows com Bluetooth, [uv](https://docs.astral.sh/uv/)):
+**PC tools** (Linux/macOS/Windows with Bluetooth, [uv](https://docs.astral.sh/uv/)):
 
 ```bash
 cd pc
-uv run chave.py            # vai buscar a chave à conta Xiaomi (QR na Mi Home)
+uv run chave.py            # fetches the key from your Xiaomi account (QR in Mi Home)
 uv run ler.py AA:BB:CC:DD:EE:FF
 ```
 
-A chave fica em `pc/secrets/`, que o git ignora.
+The key is saved in `pc/secrets/`, which git ignores.
 
-## Créditos
+The code and comments are in Portuguese.
 
-- Protocolo Bluetooth da Scooter 5 Pro documentado por [KuziaMother/SCOOTER_5_PRO](https://github.com/KuziaMother/SCOOTER_5_PRO) e [desperado0044/xiaomi-scooter-5pro-ble](https://github.com/desperado0044/xiaomi-scooter-5pro-ble). Este projeto é uma implementação própria, a partir da documentação deles.
-- Login na conta Xiaomi baseado no [Xiaomi-cloud-tokens-extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor) de Piotr Machowski (MIT).
+## Credits
 
-## Aviso
+- The Scooter 5 Pro Bluetooth protocol was documented by [KuziaMother/SCOOTER_5_PRO](https://github.com/KuziaMother/SCOOTER_5_PRO) and [desperado0044/xiaomi-scooter-5pro-ble](https://github.com/desperado0044/xiaomi-scooter-5pro-ble). This project is an independent implementation based on their documentation.
+- The Xiaomi account login is based on [Xiaomi-cloud-tokens-extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor) by Piotr Machowski (MIT).
 
-Projeto pessoal, **sem qualquer ligação à Xiaomi**. "Xiaomi" e "Mi Home" são marcas dos respetivos donos. Usa por tua conta e risco: o autor não se responsabiliza por danos, multas ou trotinetes bloqueadas no sítio errado. Cumpre as regras de trânsito do teu país.
+## Disclaimer
 
-## Licença
+A personal project, **not affiliated with Xiaomi in any way**. "Xiaomi" and "Mi Home" are trademarks of their respective owners. Use at your own risk: the author is not responsible for damage, fines, or scooters locked in the wrong place. Follow your country's traffic rules.
+
+## License
 
 [MIT](LICENSE)
-
----
-
-## English summary
-
-Unofficial Android app (UI in Portuguese) for the **Xiaomi Electric Scooter 5**, talking to it directly over Bluetooth:
-
-- Live dashboard, lock/unlock, tail light, modes, find, riding settings.
-- **Proximity auto-lock**: locks when your phone walks away (RSSI-based) and unlocks when you return. It **never locks while riding**: it re-checks "in motion" and power draw on the scooter itself before locking.
-- GPS trip recording, battery alerts, battery health history.
-- **Does not** change speed limits (by design), and does not touch firmware.
-
-You need the scooter paired in Mi Home once. The app fetches the scooter's Bluetooth key from your Xiaomi account (official login page), stores it encrypted with Android Keystore, and then works offline. Tested on the Scooter 5 only. The 5 Pro and 5 Max likely work but are untested. Reports are welcome.

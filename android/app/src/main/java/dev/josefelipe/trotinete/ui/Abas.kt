@@ -99,6 +99,10 @@ fun AbaControlo(e: Estado, defs: Definicoes, desligar: () -> Unit) {
         BloqueioAutomatico(defs, e)
     }
 
+    Cartao(titulo = "Ao andar") {
+        AoAndar(defs)
+    }
+
     Cartao(titulo = "Bateria e viagens") {
         var avisos by remember { mutableStateOf(defs.avisosBateria) }
         var limiarCarga by remember { mutableStateOf(defs.limiarCarga.toLong()) }
@@ -127,6 +131,45 @@ fun AbaControlo(e: Estado, defs: Definicoes, desligar: () -> Unit) {
     Cartao(titulo = "Ligação") {
         ExcecaoBateria()
         OutlinedButton(onClick = desligar, modifier = Modifier.fillMaxWidth()) { Text("Parar a ligação à trotinete") }
+    }
+}
+
+/** Aviso de velocidade (GPS) e passagem automática para Drive com bateria fraca. */
+@Composable
+private fun AoAndar(defs: Definicoes) {
+    var velocidade by remember { mutableFloatStateOf(defs.avisoVelocidade.takeIf { it > 0 }?.toFloat() ?: 20f) }
+    var avisar by remember { mutableStateOf(defs.avisoVelocidade > 0) }
+    var economico by remember { mutableStateOf(defs.modoEconomico > 0) }
+    var limiar by remember { mutableFloatStateOf(defs.modoEconomico.takeIf { it > 0 }?.toFloat() ?: 20f) }
+
+    Interruptor("Aviso de velocidade", "Vibra e apita quando passas do limite (pelo GPS, a gravar a viagem)", avisar) {
+        avisar = it
+        defs.avisoVelocidade = if (it) velocidade.toInt() else 0
+    }
+    if (avisar) {
+        Text("Avisar acima de ${velocidade.toInt()} km/h", fontSize = 13.sp)
+        Slider(
+            value = velocidade, onValueChange = { velocidade = it },
+            onValueChangeFinished = { defs.avisoVelocidade = velocidade.toInt() },
+            valueRange = 10f..25f, steps = 14,
+        )
+    }
+    HorizontalDivider()
+    Interruptor(
+        "Modo económico automático",
+        "Com bateria fraca passa de Sport para Drive, sempre na próxima paragem (nunca a andar)",
+        economico,
+    ) {
+        economico = it
+        defs.modoEconomico = if (it) limiar.toInt() else 0
+    }
+    if (economico) {
+        Text("Quando a bateria chegar a ${limiar.toInt()}%", fontSize = 13.sp)
+        Slider(
+            value = limiar, onValueChange = { limiar = it },
+            onValueChangeFinished = { defs.modoEconomico = limiar.toInt() },
+            valueRange = 10f..40f, steps = 5,
+        )
     }
 }
 

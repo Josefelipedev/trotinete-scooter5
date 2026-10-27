@@ -12,8 +12,8 @@ android {
         applicationId = "dev.josefelipe.trotinete"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.0.1"
     }
 
     // A chave de assinatura fica fora do repositório: caminho e senhas em ~/.gradle/gradle.properties.
@@ -70,5 +70,6 @@ dependencies {
     implementation(libs.code.scanner)
     // O code-scanner traz um fragment antigo, que o lint recusa na versão pública.
     implementation(libs.androidx.fragment)
+    implementation(libs.androidx.browser)
     testImplementation(libs.junit)
 }

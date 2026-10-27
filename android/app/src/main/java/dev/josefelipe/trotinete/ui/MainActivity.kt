@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.josefelipe.trotinete.dados.Configuracao
 import dev.josefelipe.trotinete.dados.Definicoes
 import dev.josefelipe.trotinete.servico.ServicoTrotinete
 
@@ -28,6 +29,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         defs = Definicoes(this)
+        // Depois do login no separador do Chrome: volta à app (CLEAR_TOP fecha o separador por cima dela).
+        Configuracao.aoEntrar = {
+            runOnUiThread {
+                startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            }
+        }
         importar(intent)
         if (!defs.configurada) ecra = Ecra.AJUSTES
         setContent {
@@ -52,6 +59,11 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (defs.configurada) ligar()
+    }
+
+    override fun onDestroy() {
+        Configuracao.aoEntrar = null
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {

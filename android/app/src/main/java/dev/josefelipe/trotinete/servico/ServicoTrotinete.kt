@@ -10,6 +10,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -60,6 +68,9 @@ class ServicoTrotinete : LifecycleService() {
     private var avisouCarga = false
     private var avisouFraca = false
     private var avisouTemperatura = false
+    private var ultimoAvisoVelocidade = 0L
+    private var mudouParaEconomico = false
+    private var chaveRecusada = 0
     private var ciclo: Job? = null
 
     override fun onCreate() {
@@ -152,12 +163,22 @@ class ServicoTrotinete : LifecycleService() {
                 ligou = true
                 t.login(ltmk)
                 espera = 3_000L
+                chaveRecusada = 0
                 Controlo._estado.update { it.copy(ligacao = Ligacao.LIGADA, aviso = null) }
                 sessao(t)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 android.util.Log.w("Trotinete", "Ligação terminou", e)
+                // Chave recusada várias vezes seguidas = PIN errado: insistir só faz a trotinete bloquear
+                // as ligações durante uns minutos. Para e espera que o PIN seja corrigido nos Ajustes.
+                if ("PIN errado" in (e.message ?: "") && ++chaveRecusada >= 3) {
+                    Controlo._estado.update {
+                        it.copy(ligacao = Ligacao.PARADA, rssi = null, aviso = "A trotinete recusou a chave: o PIN da trotinete deve estar errado.")
+                    }
+                    stopSelf()
+                    return
+                }
                 val estava = Controlo._estado.value
                 Controlo._estado.update { it.copy(ligacao = Ligacao.SEM_LIGACAO, aviso = e.message, rssi = null) }
                 atualizarNotificacao("Sem ligação · a tentar de novo")
@@ -200,6 +221,8 @@ class ServicoTrotinete : LifecycleService() {
             lerRapidas(t)
             gravador.amostra(Controlo.estado.value, defs.gravarViagens)
             verificarBateria(Controlo.estado.value)
+            verificarVelocidade(Controlo.estado.value)
+            modoEconomico(t, Controlo.estado.value)
             if (volta % 15 == 0) lerLentas(t)
             atualizarNotificacao(resumo(Controlo.estado.value))
             volta++
@@ -301,6 +324,46 @@ class ServicoTrotinete : LifecycleService() {
             avisouTemperatura = true
             alerta("Temperatura da bateria a $temp °C. ${if (temp >= 50) "Deixa-a arrefecer antes de carregar ou andar." else "Com frio a bateria rende menos; não a carregues abaixo de 0 °C."}")
         }
+    }
+
+    /** Vibra e apita se a velocidade GPS passar do limite escolhido (no máximo de 15 em 15 s). */
+    private fun verificarVelocidade(e: Estado) {
+        val limite = defs.avisoVelocidade
+        val kmh = e.gravacao?.kmh ?: return
+        if (limite <= 0 || kmh < limite + 0.5f) return
+        val agora = System.currentTimeMillis()
+        if (agora - ultimoAvisoVelocidade < 15_000) return
+        ultimoAvisoVelocidade = agora
+        Log.i(TAG, "Aviso de velocidade: %.0f km/h (limite %d)".format(kmh, limite))
+        val vibrador = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(VibratorManager::class.java).defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Vibrator::class.java)
+        }
+        vibrador.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 300, 150, 300), -1))
+        runCatching {
+            ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90).apply {
+                startTone(ToneGenerator.TONE_PROP_BEEP2, 400)
+                Handler(Looper.getMainLooper()).postDelayed({ release() }, 600)
+            }
+        }
+    }
+
+    /**
+     * Bateria fraca em Sport: passa para Drive para chegar mais longe. Só com a trotinete PARADA,
+     * para a velocidade máxima nunca baixar de repente a meio do caminho.
+     */
+    private suspend fun modoEconomico(t: Trotinete, e: Estado) {
+        val limiar = defs.modoEconomico
+        val b = e.bateria?.toInt() ?: return
+        if (b >= limiar + 10) mudouParaEconomico = false
+        if (limiar <= 0 || b > limiar || e.modo != 3L || !e.parada || e.aCarregar == true || mudouParaEconomico) return
+        mudouParaEconomico = true
+        t.set(P.MODO, 2)
+        Controlo._estado.update { it.copy(modo = ler(t, P.MODO).l()) }
+        Log.i(TAG, "Modo económico: bateria a $b%, Sport -> Drive")
+        alerta("Bateria a $b%: passei de Sport para Drive para chegares mais longe.")
     }
 
     private suspend fun lerDefinicoes(t: Trotinete) {

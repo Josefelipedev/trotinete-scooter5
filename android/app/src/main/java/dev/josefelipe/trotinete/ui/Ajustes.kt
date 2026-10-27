@@ -1,8 +1,13 @@
 package dev.josefelipe.trotinete.ui
 
 import android.content.Context
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.graphics.toArgb
 import android.content.Intent
 import android.net.Uri
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsClient
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,8 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -72,13 +75,13 @@ private fun lerQr(context: Context, lido: (String) -> Unit, falhou: (String) -> 
 fun Ajustes(defs: Definicoes, voltar: (() -> Unit)?, guardado: () -> Unit) {
     val context = LocalContext.current
     val passo by Configuracao.passo.collectAsStateWithLifecycle()
-    var qr by remember { mutableStateOf(defs.mac?.let { QrTrotinete(it, null) }) }
-    var avisoQr by remember { mutableStateOf<String?>(null) }
+    // QR opcional, escolhido nas opções avançadas (contas com várias trotinetes).
+    var qr by remember { mutableStateOf<QrTrotinete?>(null) }
     var avancado by remember { mutableStateOf(false) }
 
     LaunchedEffect(passo) {
         when (val p = passo) {
-            is Passo.AbrirLogin -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(p.url)))
+            is Passo.AbrirLogin -> abrirLogin(context, p.url)
             Passo.Concluido -> {
                 Configuracao.reiniciar()
                 guardado()
@@ -103,65 +106,26 @@ fun Ajustes(defs: Definicoes, voltar: (() -> Unit)?, guardado: () -> Unit) {
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Cartao(titulo = "1. A tua trotinete") {
+            Cartao(titulo = "Ligar à tua trotinete") {
                 Text(
-                    "Lê o QR do autocolante da trotinete (por baixo da plataforma ou no guiador).",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
-                )
-                OutlinedButton(
-                    onClick = {
-                        lerQr(context, { texto ->
-                            val lido = lerQrTrotinete(texto)
-                            if (lido == null) avisoQr = "Este QR não parece ser de uma trotinete Xiaomi" else {
-                                qr = lido
-                                avisoQr = null
-                            }
-                        }, { avisoQr = it })
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Default.QrCodeScanner, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Ler o QR da trotinete")
-                }
-                var link by remember { mutableStateOf("") }
-                OutlinedTextField(
-                    value = link,
-                    onValueChange = { texto ->
-                        link = texto
-                        val lido = lerQrTrotinete(texto)
-                        if (lido != null) {
-                            qr = lido
-                            avisoQr = null
-                        } else if (texto.isNotBlank()) {
-                            avisoQr = "Este link não parece ser de uma trotinete Xiaomi"
-                        }
-                    },
-                    label = { Text("ou cola aqui o link do QR (home.mi.com/…)") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth(),
-                )
-                qr?.let {
-                    Text("MAC: ${it.mac ?: "—"}", fontWeight = FontWeight.Medium)
-                    if (it.did != null) Text("Identificada na conta Xiaomi ✓", color = Verde, fontSize = 13.sp)
-                }
-                avisoQr?.let { Text(it, color = Ambar, fontSize = 13.sp) }
-            }
-
-            Cartao(titulo = "2. Chave da conta Xiaomi") {
-                Text(
-                    "Só uma vez: a app vai buscar a chave da trotinete à tua conta. O login é feito na página da Xiaomi.",
+                    "Entra com a conta Xiaomi onde a trotinete está na Mi Home. A app encontra-a sozinha e guarda a chave: é só uma vez.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
                 )
                 when (val p = passo) {
                     Passo.Inicio, Passo.Concluido -> Button(
                         onClick = { Configuracao.entrar(defs, qr) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Entrar com a conta Xiaomi") }
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) { Text("Entrar com a conta Xiaomi", fontSize = 16.sp) }
 
                     is Passo.AbrirLogin -> {
-                        Progresso("Inicia sessão na página da Xiaomi e volta aqui…")
-                        TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(p.url))) }) {
-                            Text("Abrir a página de novo")
+                        Progresso("Inicia sessão na página da Xiaomi…")
+                        Text(
+                            "Depois de entrares, se a app não voltar sozinha, toca no ✕ da página.",
+                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row {
+                            TextButton(onClick = { abrirLogin(context, p.url) }) { Text("Abrir de novo") }
+                            TextButton(onClick = { Configuracao.reiniciar() }) { Text("Cancelar") }
                         }
                     }
 
@@ -170,7 +134,7 @@ fun Ajustes(defs: Definicoes, voltar: (() -> Unit)?, guardado: () -> Unit) {
                     Passo.AProcurar -> Progresso("A procurar a trotinete na tua conta…")
 
                     is Passo.Escolher -> {
-                        Text("Qual é a tua?")
+                        Text("Tens várias trotinetes. Qual é esta?")
                         p.trotinetes.forEach { t ->
                             OutlinedButton(onClick = { Configuracao.escolher(defs, t) }, modifier = Modifier.fillMaxWidth()) {
                                 Text("${t.nome ?: t.modelo} · ${t.mac ?: "sem MAC"}")
@@ -178,9 +142,18 @@ fun Ajustes(defs: Definicoes, voltar: (() -> Unit)?, guardado: () -> Unit) {
                         }
                     }
 
+                    is Passo.PedirQr -> {
+                        Text(
+                            "Encontrei a ${p.trotinete.nome ?: "trotinete"}, mas a Xiaomi não disse o endereço Bluetooth dela. " +
+                                "Lê o QR do autocolante (por baixo da plataforma ou no guiador).",
+                            fontSize = 14.sp,
+                        )
+                        LerQr { lido -> lido.mac?.let { Configuracao.usarMacDoQr(defs, it) } }
+                    }
+
                     is Passo.PedirPin -> {
                         var pin by remember { mutableStateOf("") }
-                        Text("A chave está protegida pelo PIN que definiste para a trotinete na Mi Home.")
+                        Text("A chave está protegida pelo PIN da trotinete: o que definiste para ela na Mi Home (não é a palavra-passe da conta).")
                         OutlinedTextField(
                             value = pin, onValueChange = { pin = it.filter(Char::isDigit) },
                             label = { Text("PIN da trotinete") },
@@ -208,11 +181,76 @@ fun Ajustes(defs: Definicoes, voltar: (() -> Unit)?, guardado: () -> Unit) {
             }
 
             TextButton(onClick = { avancado = !avancado }) {
-                Text(if (avancado) "Esconder opção avançada" else "Já tenho a chave (avançado)")
+                Text(if (avancado) "Esconder opções avançadas" else "Opções avançadas")
             }
-            if (avancado) ChaveManual(defs, qr?.mac, guardado)
+            if (avancado) {
+                Cartao(titulo = "Escolher pelo QR (opcional)") {
+                    Text(
+                        "Só é preciso se a tua conta tiver várias trotinetes e quiseres ir direto a esta.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
+                    )
+                    LerQr { qr = it }
+                    qr?.let { Text("Escolhida: ${it.mac ?: "trotinete do QR"}", color = Verde, fontSize = 13.sp) }
+                }
+                ChaveManual(defs, qr?.mac, guardado)
+            }
         }
     }
+}
+
+/** Botão para ler o QR do autocolante, ou campo para colar o link dele. */
+@Composable
+private fun LerQr(lido: (QrTrotinete) -> Unit) {
+    val context = LocalContext.current
+    var aviso by remember { mutableStateOf<String?>(null) }
+    var link by remember { mutableStateOf("") }
+    OutlinedButton(
+        onClick = {
+            lerQr(context, { texto ->
+                val q = lerQrTrotinete(texto)
+                if (q == null) aviso = "Este QR não parece ser de uma trotinete Xiaomi" else {
+                    aviso = null
+                    lido(q)
+                }
+            }, { aviso = it })
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Default.QrCodeScanner, null)
+        Spacer(Modifier.width(8.dp))
+        Text("Ler o QR da trotinete")
+    }
+    OutlinedTextField(
+        value = link,
+        onValueChange = { texto ->
+            link = texto
+            val q = lerQrTrotinete(texto)
+            if (q != null) {
+                aviso = null
+                lido(q)
+            } else if (texto.isNotBlank()) {
+                aviso = "Este link não parece ser de uma trotinete Xiaomi"
+            }
+        },
+        label = { Text("ou cola o link do QR (home.mi.com/…)") },
+        singleLine = true, modifier = Modifier.fillMaxWidth(),
+    )
+    aviso?.let { Text(it, color = Ambar, fontSize = 13.sp) }
+}
+
+/**
+ * Abre a página oficial de login da Xiaomi num separador do Chrome por cima da app (Custom Tab):
+ * sem trocar de app nem copiar links, e a app nunca vê a palavra-passe. Num WebView a página ficava preta.
+ */
+private fun abrirLogin(context: Context, url: String) {
+    val tab = CustomTabsIntent.Builder()
+        .setShowTitle(true)
+        .setDefaultColorSchemeParams(CustomTabColorSchemeParams.Builder().setToolbarColor(Fundo.toArgb()).build())
+        .build()
+    // Prefere o Chrome: abre por cima da app; outros browsers (ex.: Edge) às vezes abrem à parte.
+    CustomTabsClient.getPackageName(context, listOf("com.android.chrome"), true)?.let { tab.intent.setPackage(it) }
+    runCatching { tab.launchUrl(context, Uri.parse(url)) }
+        .onFailure { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 }
 
 @Composable

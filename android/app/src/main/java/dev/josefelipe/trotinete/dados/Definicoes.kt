@@ -56,6 +56,16 @@ class Definicoes(context: Context) {
         get() = prefs.getFloat("preco_kwh", 0.20f)
         set(v) = prefs.edit().putFloat("preco_kwh", v).apply()
 
+    /** Avisar (vibrar e apitar) acima desta velocidade GPS, em km/h (0 = não avisar). */
+    var avisoVelocidade: Int
+        get() = prefs.getInt("aviso_velocidade", 0)
+        set(v) = prefs.edit().putInt("aviso_velocidade", v).apply()
+
+    /** Com a bateria nesta percentagem ou menos, passa de Sport para Drive na próxima paragem (0 = nunca). */
+    var modoEconomico: Int
+        get() = prefs.getInt("modo_economico", 0)
+        set(v) = prefs.edit().putInt("modo_economico", v).apply()
+
     /** Segundos seguidos de sinal fraco antes de bloquear. */
     var segundos: Int
         get() = prefs.getInt("segundos", 6)

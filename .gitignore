@@ -1,0 +1,17 @@
+# Chaves da trotinete e sessão da conta Xiaomi: nunca vão para o git
+secrets/
+pc/secrets/
+.venv/
+__pycache__/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+# Chave de assinatura e APKs (a APK vai para as Releases do GitHub, não para o git)
+*.jks
+*.keystore
+*.apk
+android/app/release/
+.idea/
+*.iml
+.DS_Store

@@ -12,8 +12,8 @@ android {
         applicationId = "dev.josefelipe.trotinete"
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.1"
+        versionCode = 4
+        versionName = "1.1.0"
     }
 
     // A chave de assinatura fica fora do repositório: caminho e senhas em ~/.gradle/gradle.properties.

@@ -1,6 +1,7 @@
 package dev.josefelipe.trotinete.servico
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,11 +11,16 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -25,7 +31,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import dev.josefelipe.trotinete.R
+import dev.josefelipe.trotinete.ble.DisconnectReason
 import dev.josefelipe.trotinete.ble.LigacaoBle
+import dev.josefelipe.trotinete.ble.OutOfRangeException
 import dev.josefelipe.trotinete.dados.Definicoes
 import dev.josefelipe.trotinete.dados.Diario
 import dev.josefelipe.trotinete.protocolo.Formatos
@@ -43,6 +51,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** The scooter ended the connection itself: it was switched off with the button, not lost out of range. */
+private class SwitchedOffException(msg: String) : TrotineteException(msg)
+
 /**
  * Mantém a ligação à trotinete em segundo plano (com notificação fixa, como o Android exige):
  * lê os dados, executa os comandos do ecrã e trata do bloqueio automático por afastamento.
@@ -55,6 +66,10 @@ class ServicoTrotinete : LifecycleService() {
         private const val ID_FIXA = 1
         private const val ID_ALERTA = 2
         private const val TAG = "Trotinete"
+        /** A "moving" reading younger than this is trusted by the auto-lock without re-reading. */
+        private const val FRESH_READ_MS = 4_000L
+        /** A failed "moving"/"locked" read keeps the previous value for up to this long. */
+        private const val STALE_READ_MS = 6_000L
 
         fun iniciar(context: Context) =
             ContextCompat.startForegroundService(context, Intent(context, ServicoTrotinete::class.java))
@@ -73,6 +88,25 @@ class ServicoTrotinete : LifecycleService() {
     private var chaveRecusada = 0
     private var ciclo: Job? = null
 
+    /** Steps from the phone's step detector; walking while the scooter is parked means you are leaving it. */
+    private val steps = StepWindow()
+    private val stepListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) = steps.step(System.currentTimeMillis())
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
+    private fun listenForSteps() {
+        val sensors = getSystemService(SensorManager::class.java)
+        val detector = sensors.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) ?: return
+        val allowed = ContextCompat.checkSelfPermission(this, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
+        sensors.unregisterListener(stepListener)
+        if (allowed) sensors.registerListener(stepListener, detector, SensorManager.SENSOR_DELAY_NORMAL)
+    }
+
+    /** Screen on and keyguard dismissed: the owner is holding the phone, not just carrying it. */
+    private fun phoneUnlocked(): Boolean =
+        getSystemService(PowerManager::class.java).isInteractive && !getSystemService(KeyguardManager::class.java).isDeviceLocked
+
     override fun onCreate() {
         super.onCreate()
         defs = Definicoes(this)
@@ -89,11 +123,13 @@ class ServicoTrotinete : LifecycleService() {
         val gps = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val tipos = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or (if (gps) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
         ServiceCompat.startForeground(this, ID_FIXA, notificacaoFixa("A ligar…"), tipos)
+        listenForSteps() // again on every start: the permission may have been granted since the last one
         if (ciclo?.isActive != true) ciclo = lifecycleScope.launch { cicloDeLigacao() }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        getSystemService(SensorManager::class.java).unregisterListener(stepListener)
         gravador.terminar(Controlo.estado.value)
         Controlo._estado.value = Estado()
         super.onDestroy()
@@ -143,8 +179,15 @@ class ServicoTrotinete : LifecycleService() {
 
     // --- ligação ---
 
+    /**
+     * A direct connection is fast when the scooter is nearby but gives up after 20 s. Once it fails we
+     * switch to a passive one: the Bluetooth stack waits for the scooter at almost no battery cost and
+     * connects the moment it appears. So there is no retry loop to tune and no radio time burnt while
+     * the scooter sits at home and you are at work; and when you walk back to it, the link comes up
+     * within seconds instead of after a 30 s pause.
+     */
     private suspend fun cicloDeLigacao() {
-        var espera = 3_000L
+        var passive = false
         while (true) {
             val mac = defs.mac
             val ltmk = defs.ltmk
@@ -153,21 +196,35 @@ class ServicoTrotinete : LifecycleService() {
                 stopSelf()
                 return
             }
-            Controlo._estado.update { it.copy(ligacao = Ligacao.A_LIGAR, aviso = null) }
-            atualizarNotificacao("A ligar…")
             val adaptador = getSystemService(BluetoothManager::class.java).adapter
+            if (adaptador?.isEnabled != true) {
+                Controlo._estado.update { it.copy(ligacao = Ligacao.SEM_LIGACAO, aviso = getString(R.string.connection_bluetooth_off), rssi = null) }
+                atualizarNotificacao(getString(R.string.connection_bluetooth_off))
+                delay(5_000)
+                continue
+            }
+            if (passive) {
+                Controlo._estado.update { it.copy(ligacao = Ligacao.OUT_OF_RANGE, aviso = null) }
+                atualizarNotificacao(getString(R.string.connection_out_of_range))
+            } else {
+                Controlo._estado.update { it.copy(ligacao = Ligacao.A_LIGAR, aviso = null) }
+                atualizarNotificacao("A ligar…")
+            }
             val t = Trotinete(LigacaoBle(this, adaptador.getRemoteDevice(mac)))
             var ligou = false
+            var switchedOff = false
             try {
-                t.ligar()
+                t.ligar(passive)
                 ligou = true
+                passive = false
                 t.login(ltmk)
-                espera = 3_000L
                 chaveRecusada = 0
                 Controlo._estado.update { it.copy(ligacao = Ligacao.LIGADA, aviso = null) }
                 sessao(t)
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: OutOfRangeException) {
+                // the passive wait is simply re-armed below; nothing happened that the user needs to know
             } catch (e: Exception) {
                 android.util.Log.w("Trotinete", "Ligação terminou", e)
                 // Chave recusada várias vezes seguidas = PIN errado: insistir só faz a trotinete bloquear
@@ -179,22 +236,26 @@ class ServicoTrotinete : LifecycleService() {
                     stopSelf()
                     return
                 }
+                switchedOff = e is SwitchedOffException
                 val estava = Controlo._estado.value
                 Controlo._estado.update { it.copy(ligacao = Ligacao.SEM_LIGACAO, aviso = e.message, rssi = null) }
                 atualizarNotificacao("Sem ligação · a tentar de novo")
                 if (estava.ligacao == Ligacao.LIGADA && estava.bloqueada == false && defs.autoBloqueio) {
-                    alerta("Perdi a ligação e a trotinete ficou DESBLOQUEADA. Se não a desligaste, volta para perto dela.")
+                    // Switched off with the button is most likely the owner; a lost link is the worrying one.
+                    if (switchedOff) alerta(getString(R.string.alert_switched_off_unlocked))
+                    else alerta("Perdi a ligação e a trotinete ficou DESBLOQUEADA. Se não a desligaste, volta para perto dela.")
                 }
             } finally {
                 gravador.terminar(Controlo.estado.value)
                 t.fechar()
             }
-            // se chegou a ligar e só o login falhou, volta já; se nem ligou (longe/desligada), espera cada vez mais
-            if (ligou) {
+            // Reached it and lost the link (or only the login failed): it is probably still around, so
+            // try a direct connection right away. Switched off, or never reached: let the stack wait.
+            if (ligou && !switchedOff) {
                 delay(1_500)
             } else {
-                delay(espera)
-                espera = (espera * 2).coerceAtMost(30_000L)
+                passive = true
+                delay(1_000)
             }
         }
     }
@@ -204,7 +265,12 @@ class ServicoTrotinete : LifecycleService() {
         while (Controlo.comandos.tryReceive().isSuccess) Unit // comandos de quando não havia ligação já não valem
         launch {
             t.ativa.first { !it }
-            throw TrotineteException("A trotinete desligou-se")
+            // A clean termination from the scooter means it was switched off; a timeout means we lost it.
+            throw if (t.disconnectReason == DisconnectReason.SWITCHED_OFF) {
+                SwitchedOffException(getString(R.string.connection_switched_off))
+            } else {
+                TrotineteException(getString(R.string.connection_link_lost))
+            }
         }
         launch { vigiarSinal(t) }
         launch {
@@ -262,13 +328,24 @@ class ServicoTrotinete : LifecycleService() {
             is Long -> v != 0L
             else -> null
         }
+        val now = System.currentTimeMillis()
+        // Seeing the scooter unlocked (by hand, or by anyone) ends "locked by the app": from here on a
+        // lock is somebody's decision and the app must not undo it when you come back.
+        if (bloqueada == false && defs.lockedByProximity) defs.lockedByProximity = false
+        val lockedByUs = defs.lockedByProximity
         Controlo._estado.update {
+            // One failed read of "moving" or "locked" must not disarm the auto-lock for a whole cycle:
+            // keep the last good value for a few seconds instead of dropping to null. The auto-lock's
+            // own safety check still demands a fresh reading before sending the order.
+            val movement = emAndamento ?: it.emAndamento.takeIf { _ -> now - it.movementReadAt < STALE_READ_MS }
+            val lock = bloqueada ?: it.bloqueada.takeIf { _ -> now - it.lockReadAt < STALE_READ_MS }
             it.copy(
                 bateria = bateria, voltagem = voltagem, corrente = corrente, potencia = potencia,
-                autonomia = autonomia, viagem = viagem, bloqueada = bloqueada, emAndamento = emAndamento,
+                autonomia = autonomia, viagem = viagem, bloqueada = lock, emAndamento = movement,
                 modo = modo, aCarregar = aCarregar,
-                // se alguém a desbloqueou à mão, deixa de ser "bloqueada por afastamento"
-                bloqueadaPorAfastamento = it.bloqueadaPorAfastamento && bloqueada == true,
+                movementReadAt = if (emAndamento != null) now else it.movementReadAt,
+                lockReadAt = if (bloqueada != null) now else it.lockReadAt,
+                bloqueadaPorAfastamento = lockedByUs && lock == true,
             )
         }
     }
@@ -426,6 +503,7 @@ class ServicoTrotinete : LifecycleService() {
                         return
                     }
                     t.set(P.BLOQUEADA, if (c.bloquear) 1 else 0)
+                    defs.lockedByProximity = false // a lock or unlock by hand is never undone by the app
                     Controlo._estado.update {
                         it.copy(bloqueada = ler(t, P.BLOQUEADA) as? Boolean, bloqueadaPorAfastamento = false, aviso = null)
                     }
@@ -458,100 +536,86 @@ class ServicoTrotinete : LifecycleService() {
     }
 
     /**
-     * Vigia o sinal para bloquear ANTES de a ligação cair — depois de cair já não há como enviar a ordem.
-     * Lê a cada 0,8 s e, com o bloqueio automático ligado e a trotinete parada, bloqueia se:
-     *   - o sinal cair a pique para um nível já fraco (afastaste-te depressa), ou
-     *   - as leituras de sinal começarem a falhar já com o sinal fraco (a ligação está a morrer), ou
-     *   - o sinal ficar abaixo do limiar durante os segundos configurados (afastamento lento).
+     * Watches the signal to lock BEFORE the link drops (afterwards there is no way to send the order)
+     * and to unlock when the owner comes back. One RSSI reading every 0.8 s goes into
+     * [ProximityWatcher], which holds all the rules; this method only gathers the inputs and carries
+     * out the decisions. A fresh watcher per connection: a new connection means the owner was away.
      */
     private suspend fun vigiarSinal(t: Trotinete) {
-        val janela = ArrayDeque<Int>()      // últimas leituras válidas (até 5): suaviza e deixa ver a queda
-        var fracoDesde: Long? = null
-        var forteDesde: Long? = null
-        var ultimaValida: Int? = null       // último sinal suavizado, para decidir se uma falha é "a cair"
-        var falhasSeguidas = 0
-        var ultimaTentativa = 0L            // evita repetir a ordem de bloquear em cada leitura
-        var semBloquearAte = 0L             // depois de desbloquear ao voltar, não volta a bloquear logo
+        val watcher = ProximityWatcher {
+            ProximityWatcher.Settings(
+                autoLock = defs.autoBloqueio,
+                autoUnlock = defs.autoDesbloqueio,
+                manualThresholdDbm = defs.limiarDbm,
+                adaptiveThreshold = defs.adaptiveThreshold,
+                learnedBaselineDbm = defs.learnedBaselineDbm,
+                weakSeconds = defs.segundos,
+                unlockRequiresPhoneUnlocked = defs.unlockRequiresPhoneUnlocked,
+            )
+        }
         while (true) {
             delay(800)
             val e = Controlo.estado.value
-            val agora = System.currentTimeMillis()
-            val limiar = defs.limiarDbm
-            val podeBloquear = defs.autoBloqueio && e.bloqueada == false && e.parada && agora >= semBloquearAte
-            suspend fun bloquear(motivo: String) {
-                if (agora - ultimaTentativa < 4_000) return
-                ultimaTentativa = agora
-                fracoDesde = null
-                Log.i(TAG, "AUTO afastamento ($motivo, sinal=${ultimaValida ?: "?"} dBm) -> a bloquear")
-                autoBloquear(t)
-            }
+            val now = System.currentTimeMillis()
+            val sample = ProximityWatcher.Sample(
+                now = now,
+                rssi = t.rssi(),
+                locked = e.bloqueada,
+                lockedByUs = e.bloqueadaPorAfastamento,
+                stopped = e.parada,
+                riding = (e.emAndamento ?: 0L) != 0L || kotlin.math.abs(e.potencia ?: 0f) >= 150f,
+                charging = e.aCarregar == true,
+                recentSteps = steps.countSince(now, ProximityWatcher.STEP_WINDOW_MS),
+                phoneUnlocked = phoneUnlocked(),
+            )
+            val decision = watcher.onSample(sample)
+            Controlo._estado.update { it.copy(rssi = watcher.smoothedRssi ?: it.rssi, lockThresholdDbm = watcher.lockThresholdDbm) }
+            watcher.learnedBaseline?.let { if (it != defs.learnedBaselineDbm) defs.learnedBaselineDbm = it }
 
-            val r = t.rssi()
-            if (r == null) {
-                // a leitura falhou: se já vínhamos fracos, a ligação está a morrer -> última hipótese de bloquear
-                falhasSeguidas++
-                if (podeBloquear && falhasSeguidas >= 2 && (ultimaValida ?: 0) < limiar + 12) bloquear("leituras a falhar")
-                continue
-            }
-            falhasSeguidas = 0
-            janela.addLast(r)
-            if (janela.size > 5) janela.removeFirst()
-            val media = janela.takeLast(3).average().toInt()
-            ultimaValida = media
-            Controlo._estado.update { it.copy(rssi = media) }
-
-            // queda a pique: o sinal mais recente está muito abaixo do pico recente e já está fraco
-            val quedaRapida = janela.size >= 2 && janela.max() - r >= 12 && media < limiar + 8
-
-            if (podeBloquear) {
-                if (quedaRapida) {
-                    bloquear("queda a pique")
-                } else if (media < limiar) {
-                    val desde = fracoDesde ?: agora
-                    fracoDesde = desde
-                    if (agora - desde >= defs.segundos * 1_000L) bloquear("sinal fraco ${defs.segundos}s")
-                } else {
-                    fracoDesde = null
+            when (decision) {
+                is ProximityWatcher.Decision.Lock -> {
+                    Log.i(TAG, "AUTO away (${decision.reason}, rssi=${watcher.smoothedRssi ?: "?"} dBm, threshold=${watcher.lockThresholdDbm}) -> locking")
+                    autoBloquear(t, quiet = decision.quiet)
                 }
-            } else {
-                fracoDesde = null
-            }
-
-            // desbloqueio automático: só se fomos nós a bloquear, e com o sinal claramente mais forte que o
-            // limiar. Era limiar+20, mas com −78 isso pedia −58 e ao pé da trotinete o sinal anda entre
-            // −62 e −75 (medido a 27/out): nunca desbloqueava.
-            if (defs.autoDesbloqueio && e.bloqueada == true && e.bloqueadaPorAfastamento && media > limiar + 10) {
-                if (forteDesde == null) forteDesde = agora
-                if (agora - forteDesde >= 2_000) {
-                    forteDesde = null
-                    try {
-                        t.set(P.BLOQUEADA, 0)
-                        semBloquearAte = agora + 20_000
-                        Controlo._estado.update { it.copy(bloqueada = false, bloqueadaPorAfastamento = false) }
-                        Log.i(TAG, "AUTO regresso (sinal=$media dBm) -> desbloqueada")
-                        alerta("Bem-vindo de volta: desbloqueei a trotinete.")
-                    } catch (ex: TrotineteException) {
-                        Controlo._estado.update { it.copy(aviso = ex.message) }
-                    }
+                is ProximityWatcher.Decision.Unlock -> try {
+                    t.set(P.BLOQUEADA, 0)
+                    defs.lockedByProximity = false
+                    Controlo._estado.update { it.copy(bloqueada = false, bloqueadaPorAfastamento = false) }
+                    Log.i(TAG, "AUTO back (${decision.reason}, rssi=${watcher.smoothedRssi} dBm) -> unlocked")
+                    alerta("Bem-vindo de volta: desbloqueei a trotinete.")
+                } catch (ex: TrotineteException) {
+                    Controlo._estado.update { it.copy(aviso = ex.message) }
                 }
-            } else {
-                forteDesde = null
+                ProximityWatcher.Decision.None -> Unit
             }
         }
     }
 
-    private suspend fun autoBloquear(t: Trotinete) {
-        // Segurança: nunca bloquear em andamento. Confirma com leituras frescas (não as do ciclo, que
-        // podem ter 2 s). Só bloqueia se "em andamento" vier EXATAMENTE 0; se vier outra coisa ou a
-        // leitura falhar (null), aborta. A potência é defesa a dobrar: a andar gasta centenas de watts.
-        if (ler(t, P.EM_ANDAMENTO).l() != 0L) return
-        val potencia = num(t, P.POTENCIA)
-        if (potencia != null && kotlin.math.abs(potencia) >= 150f) return
+    /** [quiet]: lock without a notification (charging at home: locking is right, being told every time is noise). */
+    private suspend fun autoBloquear(t: Trotinete, quiet: Boolean) {
+        // Safety: never lock a moving scooter. Only an explicit "not moving" lets the order go out.
+        // The cycle's own readings are at most a few seconds old; when they are that fresh we trust
+        // them and send the lock at once. This matters because the auto-lock fires exactly when the
+        // link is dying, and the two extra reads done here before (up to 8 s each) were often what
+        // let the connection drop before the order left. Only with stale readings do we take one
+        // quick fresh one (single attempt, 1.5 s); no answer, or anything other than 0, aborts.
+        val e = Controlo.estado.value
+        val fresh = e.emAndamento != null && System.currentTimeMillis() - e.movementReadAt < FRESH_READ_MS
+        val moving = if (fresh) {
+            e.emAndamento != 0L || (e.potencia != null && kotlin.math.abs(e.potencia) >= 150f)
+        } else {
+            try { t.get(P.EM_ANDAMENTO, quick = true).l() != 0L } catch (ex: TrotineteException) { true }
+        }
+        if (moving) {
+            Log.i(TAG, "AUTO lock skipped: scooter not confirmed stopped (fresh=$fresh)")
+            return
+        }
         try {
             t.set(P.BLOQUEADA, 1)
+            defs.lockedByProximity = true
             Controlo._estado.update { it.copy(bloqueada = true, bloqueadaPorAfastamento = true) }
             Log.i(TAG, "AUTO bloqueada com sucesso")
-            alerta("Afastaste-te e bloqueei a trotinete. 🔒")
+            if (!quiet) alerta("Afastaste-te e bloqueei a trotinete. 🔒")
         } catch (e: TrotineteException) {
             Log.w(TAG, "AUTO falhou o bloqueio: ${e.message}")
             alerta("Afastaste-te mas NÃO consegui bloquear a trotinete: ${e.message}")

@@ -61,11 +61,15 @@ An **unofficial** Android app to control the Xiaomi Electric Scooter 5 without M
 
 In **Controlo → Segurança** (Controls → Safety):
 
-- **Threshold (dBm):** the further left, the further away you have to go before it locks. The default is **−78 dBm**, tuned in a real home: next to the scooter the signal is −62 to −75, and at 15–20 m it drops to −83 to −89.
+- **Learn the threshold by itself** (on by default): while you ride, the phone is by definition next to the scooter, so the app measures the typical signal there. "Away" is 12 dB below that, "back" is 4 dB below. Until the first ride long enough to learn from, it uses the manual threshold.
+- **Threshold (dBm)**, when learning is off: the further left, the further away you have to go before it locks. The default is **−78 dBm**, tuned in a real home: next to the scooter the signal is −62 to −75, and at 15–20 m it drops to −83 to −89.
 - **Seconds:** how long the signal must stay weak before locking. A sudden drop in signal (for example when you close the door) locks it right away.
-- **Unlock when I come back:** unlocks when the signal stays above threshold + 10 dBm for 2 s, and only if the app was the one that locked it. The app never undoes a lock you made by hand.
+- **Steps:** with the physical-activity permission, the app also counts your steps. Ten steps while the scooter is parked and the signal is a little below normal lock it before the signal gets weak, which is what used to let the connection drop before the lock went out.
+- **Unlock when I come back:** unlocks when the signal stays above the "back" level for 2 s **and** you are actually approaching (steps, or a rising signal), and only if the app was the one that locked it. A good signal on its own is not enough: a scooter parked outside a shop window must not unlock while you are inside. The app remembers that it was the one that locked, even if Android restarts it while you are away. The app never undoes a lock you made by hand.
+- **Only with the phone unlocked:** stricter unlock for risky places. Besides being near, you must have the phone unlocked in your hand.
+- **While charging** the app still locks when you walk away but does it quietly, and never unlocks by itself.
 
-The screen shows the **current signal**. Walk away slowly and watch the numbers to pick your own threshold.
+The screen shows the **current signal** and the threshold in use. Walk away slowly and watch the numbers if you want to pick your own threshold.
 
 ⚠️ Bluetooth signal varies with walls, pockets and your body. This is a convenience and **not a replacement for a real lock**.
 

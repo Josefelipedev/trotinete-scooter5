@@ -1,10 +1,16 @@
 package dev.josefelipe.trotinete.ui
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.compose.ui.res.stringResource
+import androidx.core.content.ContextCompat
+import dev.josefelipe.trotinete.R
+import dev.josefelipe.trotinete.servico.ProximityWatcher
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -206,8 +212,12 @@ private fun ExcecaoBateria() {
 private fun BloqueioAutomatico(defs: Definicoes, e: Estado) {
     var ativo by remember { mutableStateOf(defs.autoBloqueio) }
     var desbloquear by remember { mutableStateOf(defs.autoDesbloqueio) }
+    var adaptive by remember { mutableStateOf(defs.adaptiveThreshold) }
+    var strictUnlock by remember { mutableStateOf(defs.unlockRequiresPhoneUnlocked) }
     var limiar by remember { mutableFloatStateOf(defs.limiarDbm.toFloat()) }
     var segundos by remember { mutableFloatStateOf(defs.segundos.toFloat()) }
+    val context = LocalContext.current
+    val stepsAllowed = ContextCompat.checkSelfPermission(context, Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED
 
     Interruptor("Bloquear quando me afasto", "Só bloqueia com a trotinete parada", ativo) {
         ativo = it
@@ -215,27 +225,52 @@ private fun BloqueioAutomatico(defs: Definicoes, e: Estado) {
     }
     if (!ativo) return
     HorizontalDivider()
+    // The level the service is actually using (learnt or manual); falls back to the slider before the first reading.
+    val threshold = e.lockThresholdDbm ?: limiar.toInt()
     val agora = e.rssi
     Text(
-        "Sinal agora: ${agora?.let { "$it dBm" } ?: "—"} · bloqueia abaixo de ${limiar.toInt()} dBm",
+        "Sinal agora: ${agora?.let { "$it dBm" } ?: "—"} · bloqueia abaixo de $threshold dBm",
         fontSize = 13.sp,
-        color = if (agora != null && agora < limiar) Ambar else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (agora != null && agora < threshold) Ambar else MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    Text("Mais à esquerda = só bloqueia mais longe", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Slider(
-        value = limiar, onValueChange = { limiar = it },
-        onValueChangeFinished = { defs.limiarDbm = limiar.toInt() },
-        valueRange = -100f..-60f, steps = 39,
-    )
+    Interruptor(stringResource(R.string.auto_lock_adaptive_title), stringResource(R.string.auto_lock_adaptive_desc), adaptive) {
+        adaptive = it
+        defs.adaptiveThreshold = it
+    }
+    if (adaptive) {
+        val baseline = defs.learnedBaselineDbm
+        Text(
+            if (baseline != null) stringResource(R.string.auto_lock_learned, baseline, baseline - ProximityWatcher.BASELINE_LOCK_OFFSET_DB)
+            else stringResource(R.string.auto_lock_learning),
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        Text("Mais à esquerda = só bloqueia mais longe", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Slider(
+            value = limiar, onValueChange = { limiar = it },
+            onValueChangeFinished = { defs.limiarDbm = limiar.toInt() },
+            valueRange = -100f..-60f, steps = 39,
+        )
+    }
     Text("Esperar ${segundos.toInt()} s de sinal fraco antes de bloquear", fontSize = 13.sp)
     Slider(
         value = segundos, onValueChange = { segundos = it },
         onValueChangeFinished = { defs.segundos = segundos.toInt() },
         valueRange = 3f..20f, steps = 16,
     )
+    Text(
+        stringResource(if (stepsAllowed) R.string.auto_lock_steps_ok else R.string.auto_lock_steps_missing),
+        fontSize = 12.sp, color = if (stepsAllowed) MaterialTheme.colorScheme.onSurfaceVariant else Ambar,
+    )
     Interruptor("Desbloquear quando volto", "Só se foi a app que bloqueou", desbloquear) {
         desbloquear = it
         defs.autoDesbloqueio = it
+    }
+    if (desbloquear) {
+        Interruptor(stringResource(R.string.auto_unlock_strict_title), stringResource(R.string.auto_unlock_strict_desc), strictUnlock) {
+            strictUnlock = it
+            defs.unlockRequiresPhoneUnlocked = it
+        }
     }
     if (e.bloqueadaPorAfastamento) Text("🔒 Bloqueada pela app porque te afastaste", color = Verde, fontSize = 13.sp)
 }

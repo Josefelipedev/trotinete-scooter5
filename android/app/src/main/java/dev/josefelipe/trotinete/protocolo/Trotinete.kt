@@ -8,7 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
-class TrotineteException(msg: String) : Exception(msg)
+open class TrotineteException(msg: String) : Exception(msg)
 
 /**
  * Protocolo da Scooter 5 por cima de [LigacaoBle]; é o mesmo de pc/trotinete/protocolo.py,
@@ -31,6 +31,8 @@ class Trotinete(private val ble: LigacaoBle) {
         const val MNG_ACK = 5
 
         const val FRAME_SPEC = 18
+        const val REQUEST_TIMEOUT_MS = 4_000L
+        const val QUICK_TIMEOUT_MS = 1_500L
         val SAL = "smartcfg-login-salt".toByteArray()
         val INFO = "smartcfg-login-info".toByteArray()
         val NONCE_LOGIN = ByteArray(12) { (0x10 + it).toByte() }
@@ -45,9 +47,10 @@ class Trotinete(private val ble: LigacaoBle) {
     private var tid = 1
     private val pedidos = Mutex()
 
-    suspend fun ligar() {
+    /** [passive]: wait for the scooter to show up instead of a 20 s direct attempt (see [LigacaoBle.ligar]). */
+    suspend fun ligar(passive: Boolean = false) {
         ble.partilharFila(SPEC_ENVIO, SPEC_RESPOSTA)
-        ble.ligar(listOf(CONTROLO, LOGIN, SPEC_ENVIO, SPEC_RESPOSTA, INFO_MCU))
+        ble.ligar(listOf(CONTROLO, LOGIN, SPEC_ENVIO, SPEC_RESPOSTA, INFO_MCU), passive)
     }
 
     // --- transporte ---
@@ -176,7 +179,7 @@ class Trotinete(private val ble: LigacaoBle) {
 
     private fun nonce(iv: ByteArray, c: Int) = iv + ByteArray(4) + byteArrayOf(c.toByte(), (c ushr 8).toByte(), (c ushr 16).toByte(), (c ushr 24).toByte())
 
-    private suspend fun pedidoUmaVez(frame: ByteArray): ByteArray? {
+    private suspend fun pedidoUmaVez(frame: ByteArray, timeoutMs: Long): ByteArray? {
         val c = contador++
         val cifrado = le16(c and 0xFFFF) + Cripto.ccmCifrar(chaveApp, nonce(ivApp, c), frame)
         val frames = partir(cifrado, FRAME_SPEC)
@@ -184,7 +187,7 @@ class Trotinete(private val ble: LigacaoBle) {
         fila.esvaziar()
         ble.escrever(SPEC_ENVIO, byteArrayOf(0, 0, CTR.toByte(), 0) + le16(frames.size))
 
-        val prazo = System.currentTimeMillis() + 4_000
+        val prazo = System.currentTimeMillis() + timeoutMs
         var enviado = false
         var total: Int? = null
         val partes = sortedMapOf<Int, ByteArray>()
@@ -217,17 +220,29 @@ class Trotinete(private val ble: LigacaoBle) {
     }
 
     /** Um pedido de cada vez; a trotinete às vezes fica calada num pedido e uma 2.ª tentativa resolve. */
-    private suspend fun pedido(fazerFrame: (Int) -> ByteArray): ByteArray? = pedidos.withLock {
-        repeat(2) {
+    private suspend fun pedido(
+        attempts: Int = 2,
+        timeoutMs: Long = REQUEST_TIMEOUT_MS,
+        fazerFrame: (Int) -> ByteArray,
+    ): ByteArray? = pedidos.withLock {
+        repeat(attempts) {
             val t = tid
             tid = if (tid >= 0xFFFF) 1 else tid + 1
-            pedidoUmaVez(fazerFrame(t))?.let { return@withLock it }
+            pedidoUmaVez(fazerFrame(t), timeoutMs)?.let { return@withLock it }
         }
         null
     }
 
-    suspend fun get(p: Prop): Any? {
-        val r = pedido { Frames.get(p, it) } ?: throw TrotineteException("Sem resposta (${p.siid},${p.piid})")
+    /**
+     * [quick]: one attempt with a short timeout instead of two with 4 s each. For checks that must
+     * answer within seconds on a link that may be dying (the auto-lock safety re-check); a "no answer"
+     * there is treated as unsafe by the caller, so retrying would only waste the time we have left.
+     */
+    suspend fun get(p: Prop, quick: Boolean = false): Any? {
+        val r = pedido(
+            attempts = if (quick) 1 else 2,
+            timeoutMs = if (quick) QUICK_TIMEOUT_MS else REQUEST_TIMEOUT_MS,
+        ) { Frames.get(p, it) } ?: throw TrotineteException("Sem resposta (${p.siid},${p.piid})")
         val estado = Frames.estado(r)
         if (estado != 0) throw TrotineteException("(${p.siid},${p.piid}) recusado: 0x%04x".format(estado))
         return Frames.valor(r)
@@ -243,6 +258,9 @@ class Trotinete(private val ble: LigacaoBle) {
     suspend fun rssi(): Int? = ble.rssi()
 
     val ativa get() = ble.ativa
+
+    /** Why the last disconnection happened (link lost vs. scooter switched off), once [ativa] is false. */
+    val disconnectReason get() = ble.disconnectReason
 
     /**
      * Pedido simples ao canal 0x001c (não precisa de login): [opcode] -> [?][tamanho][dados].

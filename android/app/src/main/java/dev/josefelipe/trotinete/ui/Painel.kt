@@ -59,10 +59,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.josefelipe.trotinete.R
 import dev.josefelipe.trotinete.dados.Configuracao
 import dev.josefelipe.trotinete.dados.Definicoes
 import dev.josefelipe.trotinete.protocolo.P
@@ -182,6 +184,7 @@ private fun EstadoLigacao(e: Estado) {
         Ligacao.LIGADA -> "Ligada" + (e.rssi?.let { " · ${barras(it)}" } ?: "") to Verde
         Ligacao.A_LIGAR -> "A ligar…" to Ambar
         Ligacao.SEM_LIGACAO -> "Sem ligação · a tentar" to Vermelho
+        Ligacao.OUT_OF_RANGE -> stringResource(R.string.connection_out_of_range) to Ambar
         Ligacao.PARADA -> "Desligada" to MaterialTheme.colorScheme.onSurfaceVariant
     }
     // O ponto pulsa enquanto procura a trotinete.

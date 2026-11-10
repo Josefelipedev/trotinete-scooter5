@@ -33,6 +33,30 @@ class Definicoes(context: Context) {
         get() = prefs.getBoolean("auto_desbloqueio", false)
         set(v) = prefs.edit().putBoolean("auto_desbloqueio", v).apply()
 
+    /**
+     * True while the scooter is locked because the app locked it by proximity. Kept on disk, not only
+     * in memory: Android often kills the service while you are away, and without this the app would
+     * come back, see a locked scooter, not know it was its own doing and never unlock it on your return.
+     */
+    var lockedByProximity: Boolean
+        get() = prefs.getBoolean("locked_by_proximity", false)
+        set(v) = prefs.edit().putBoolean("locked_by_proximity", v).apply()
+
+    /** Learn the "next to the scooter" signal level while riding and derive the thresholds from it, instead of [limiarDbm]. */
+    var adaptiveThreshold: Boolean
+        get() = prefs.getBoolean("adaptive_threshold", true)
+        set(v) = prefs.edit().putBoolean("adaptive_threshold", v).apply()
+
+    /** Median signal (dBm) seen while riding, learnt by the app; null until the first ride long enough to learn from. */
+    var learnedBaselineDbm: Int?
+        get() = prefs.getInt("learned_baseline_dbm", 0).takeIf { it != 0 }
+        set(v) = prefs.edit().putInt("learned_baseline_dbm", v ?: 0).apply()
+
+    /** Strict auto-unlock: besides being near, the phone must be unlocked and in use. */
+    var unlockRequiresPhoneUnlocked: Boolean
+        get() = prefs.getBoolean("unlock_requires_phone_unlocked", false)
+        set(v) = prefs.edit().putBoolean("unlock_requires_phone_unlocked", v).apply()
+
     /** Sinal (dBm) abaixo do qual se considera que te afastaste (afinado em casa do Jose a 27/out/2026). */
     var limiarDbm: Int
         get() = prefs.getInt("limiar", -78)

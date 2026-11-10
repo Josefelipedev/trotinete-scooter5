@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Connection states -->
+    <string name="connection_out_of_range">Fora de alcance · liga sozinha quando a trotinete aparecer</string>
+    <string name="connection_bluetooth_off">Bluetooth desligado</string>
+    <string name="connection_link_lost">Perdi a ligação à trotinete</string>
+    <string name="connection_switched_off">A trotinete foi desligada</string>
+
+    <!-- Alerts -->
+    <string name="alert_switched_off_unlocked">A trotinete foi desligada pelo botão e ficou desbloqueada. Se não foste tu, vai ver.</string>
+
+    <!-- Proximity auto-lock settings -->
+    <string name="auto_lock_adaptive_title">Afinar o limiar sozinha</string>
+    <string name="auto_lock_adaptive_desc">Aprende o sinal do teu telemóvel enquanto andas</string>
+    <string name="auto_lock_learned">Ao pé da trotinete o sinal é %1$d dBm · bloqueia abaixo de %2$d dBm</string>
+    <string name="auto_lock_learning">Ainda a aprender: faz uma viagem com o telemóvel no sítio do costume</string>
+    <string name="auto_lock_steps_ok">Também conta os teus passos para perceber que te afastaste</string>
+    <string name="auto_lock_steps_missing">Sem permissão de atividade física só usa o sinal. Dá-a nas definições do Android.</string>
+    <string name="auto_unlock_strict_title">Só com o telemóvel desbloqueado</string>
+    <string name="auto_unlock_strict_desc">Mais seguro: não desbloqueia com o telemóvel no bolso</string>
+</resources>

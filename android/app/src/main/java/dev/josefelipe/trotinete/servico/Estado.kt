@@ -6,7 +6,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-enum class Ligacao { PARADA, A_LIGAR, LIGADA, SEM_LIGACAO }
+/** OUT_OF_RANGE: the Bluetooth stack is waiting for the scooter to appear (passive autoConnect), no retries running. */
+enum class Ligacao { PARADA, A_LIGAR, LIGADA, SEM_LIGACAO, OUT_OF_RANGE }
 
 data class Estado(
     val ligacao: Ligacao = Ligacao.PARADA,
@@ -48,6 +49,12 @@ data class Estado(
     val viagensGuardadas: Int = 0,
     /** true se fomos nós a bloquear por afastamento (só então se desbloqueia sozinha). */
     val bloqueadaPorAfastamento: Boolean = false,
+    /** When [emAndamento] was last read successfully (epoch ms); lets the auto-lock trust a recent value instead of re-reading. */
+    val movementReadAt: Long = 0,
+    /** When [bloqueada] was last read successfully (epoch ms). */
+    val lockReadAt: Long = 0,
+    /** The "away" signal level the auto-lock is using right now (manual or learnt), for the settings screen. */
+    val lockThresholdDbm: Int? = null,
 ) {
     /**
      * Parada com segurança para bloquear: a trotinete diz que não está em andamento e gasta pouco.

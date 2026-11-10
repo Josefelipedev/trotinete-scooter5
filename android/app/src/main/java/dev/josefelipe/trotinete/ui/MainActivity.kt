@@ -97,6 +97,7 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
             add(Manifest.permission.ACCESS_FINE_LOCATION)
             add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            add(Manifest.permission.ACTIVITY_RECOGNITION) // step detector for the proximity auto-lock
         }
         permissoes.launch(pedir.toTypedArray())
     }

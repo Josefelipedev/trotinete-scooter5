@@ -61,11 +61,15 @@ App Android **não oficial** para controlar a Xiaomi Electric Scooter 5 sem a Mi
 
 Em **Controlo → Segurança**:
 
-- **Limiar (dBm):** quanto mais à esquerda, mais longe tens de ir para ela bloquear. Por omissão está em **−78 dBm**, afinado numa casa real: ao lado da trotinete o sinal anda entre −62 e −75, e a 15–20 m desce para −83 a −89.
+- **Afinar o limiar sozinha** (ligado por omissão): enquanto andas, o telemóvel está por definição ao pé da trotinete, por isso a app mede o sinal típico nessa posição. "Longe" é 12 dB abaixo disso, "de volta" é 4 dB abaixo. Até à primeira viagem suficientemente longa para aprender, usa o limiar manual.
+- **Limiar (dBm)**, com a aprendizagem desligada: quanto mais à esquerda, mais longe tens de ir para ela bloquear. Por omissão está em **−78 dBm**, afinado numa casa real: ao lado da trotinete o sinal anda entre −62 e −75, e a 15–20 m desce para −83 a −89.
 - **Segundos:** quanto tempo de sinal fraco antes de bloquear. Uma queda brusca de sinal (por exemplo ao fechar a porta) bloqueia logo.
-- **Desbloquear quando volto:** desbloqueia com sinal acima de limiar + 10 dBm durante 2 s, e só se foi a app que bloqueou. Um bloqueio teu à mão nunca é desfeito pela app.
+- **Passos:** com a permissão de atividade física, a app também conta os teus passos. Dez passos com a trotinete parada e o sinal um pouco abaixo do normal bloqueiam antes de o sinal ficar fraco, que era o que deixava a ligação cair antes de a ordem sair.
+- **Desbloquear quando volto:** desbloqueia com o sinal acima do nível "de volta" durante 2 s **e** com sinais de aproximação (passos, ou sinal a subir), e só se foi a app que bloqueou. Um bom sinal sozinho não chega: uma trotinete à porta de uma loja não pode desbloquear enquanto estás lá dentro. A app lembra-se de que foi ela a bloquear, mesmo que o Android a reinicie enquanto estás longe. Um bloqueio teu à mão nunca é desfeito pela app.
+- **Só com o telemóvel desbloqueado:** desbloqueio mais apertado para sítios de risco. Além de estares perto, tens de ter o telemóvel desbloqueado na mão.
+- **A carregar** a app continua a bloquear quando te afastas, mas em silêncio, e nunca desbloqueia sozinha.
 
-O ecrã mostra o **sinal atual**. Afasta-te devagar e vê os números para escolher o teu limiar.
+O ecrã mostra o **sinal atual** e o limiar em uso. Afasta-te devagar e vê os números se quiseres escolher o teu próprio limiar.
 
 ⚠️ O sinal Bluetooth varia com paredes, bolsos e o corpo. Isto é uma comodidade e **não substitui um cadeado**.
 

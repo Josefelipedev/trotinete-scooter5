@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Launcher name; the ensaio build type overrides it in src/ensaio -->
+    <string name="app_name">Trotinete</string>
+
     <!-- Connection states -->
     <string name="connection_out_of_range">Fora de alcance · liga sozinha quando a trotinete aparecer</string>
     <string name="connection_bluetooth_off">Bluetooth desligado</string>

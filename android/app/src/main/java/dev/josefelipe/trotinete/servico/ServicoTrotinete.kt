@@ -15,12 +15,15 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -70,6 +73,8 @@ class ServicoTrotinete : LifecycleService() {
         private const val FRESH_READ_MS = 4_000L
         /** A failed "moving"/"locked" read keeps the previous value for up to this long. */
         private const val STALE_READ_MS = 6_000L
+        /** How long the CPU is kept awake once a return looks likely; long enough to walk the last stretch. */
+        private const val APPROACH_AWAKE_MS = 120_000L
 
         fun iniciar(context: Context) =
             ContextCompat.startForegroundService(context, Intent(context, ServicoTrotinete::class.java))
@@ -80,6 +85,9 @@ class ServicoTrotinete : LifecycleService() {
     private lateinit var defs: Definicoes
     private lateinit var gravador: Gravador
     private lateinit var diario: Diario
+    private lateinit var autoLog: AutoLockLog
+    /** Text of the fixed notification as last posted; re-posting the same text every 2 s is just churn. */
+    private var shownNotificationText: String? = null
     private var avisouCarga = false
     private var avisouFraca = false
     private var avisouTemperatura = false
@@ -91,8 +99,57 @@ class ServicoTrotinete : LifecycleService() {
     /** Steps from the phone's step detector; walking while the scooter is parked means you are leaving it. */
     private val steps = StepWindow()
     private val stepListener = object : SensorEventListener {
-        override fun onSensorChanged(event: SensorEvent) = steps.step(System.currentTimeMillis())
+        override fun onSensorChanged(event: SensorEvent) {
+            // While the phone sleeps the sensor holds steps back and hands them over in a batch on
+            // wake-up; count each at the moment it was taken, not the moment it arrived.
+            val ageMs = (SystemClock.elapsedRealtimeNanos() - event.timestamp) / 1_000_000
+            val now = System.currentTimeMillis()
+            steps.step(if (ageMs > 0) now - ageMs else now)
+        }
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
+    /**
+     * With the phone asleep in a pocket the CPU is suspended between Bluetooth events, and the 0.8 s
+     * signal check only runs when something else wakes it. After a few minutes away that is fine,
+     * but after hours the phone is deep in Doze and the check may not run at all until the screen
+     * comes on, so the scooter stays locked until you open the app. Around the moments that announce
+     * a return (the scooter reappearing, you starting to walk) the CPU is kept awake for a short,
+     * bounded window, and only while there is a proximity lock to undo.
+     */
+    private val approachWakeLock by lazy {
+        getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "trotinete:approach")
+            .apply { setReferenceCounted(false) }
+    }
+
+    private fun stayAwakeForApproach(why: String) {
+        if (!defs.autoDesbloqueio || !defs.lockedByProximity) return
+        approachWakeLock.acquire(APPROACH_AWAKE_MS)
+        autoLog.write("awake ${APPROACH_AWAKE_MS / 1000} s for the walk back ($why)")
+    }
+
+    private fun endApproach() {
+        if (approachWakeLock.isHeld) approachWakeLock.release()
+    }
+
+    /**
+     * Significant motion is a wake-up sensor: it fires once when you start walking after sitting
+     * still, even in Doze. With the scooter still in Bluetooth range (a desk near where it is parked)
+     * that is the cue to keep the CPU awake and watch the signal while you walk to it.
+     */
+    private val motionTrigger = object : TriggerEventListener() {
+        override fun onTrigger(event: TriggerEvent?) {
+            if (Controlo.estado.value.ligacao == Ligacao.LIGADA) stayAwakeForApproach("you started walking")
+            armMotionTrigger() // one-shot: re-arm for the next time
+        }
+    }
+
+    private fun armMotionTrigger() {
+        val sensors = getSystemService(SensorManager::class.java)
+        val sensor = sensors.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION) ?: return
+        sensors.cancelTriggerSensor(motionTrigger, sensor)
+        sensors.requestTriggerSensor(motionTrigger, sensor)
     }
 
     private fun listenForSteps() {
@@ -111,6 +168,7 @@ class ServicoTrotinete : LifecycleService() {
         super.onCreate()
         defs = Definicoes(this)
         diario = Diario(this)
+        autoLog = AutoLockLog(this)
         gravador = Gravador(this, diario)
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CANAL_LIGACAO, "Ligação à trotinete", NotificationManager.IMPORTANCE_LOW))
@@ -123,13 +181,18 @@ class ServicoTrotinete : LifecycleService() {
         val gps = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val tipos = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or (if (gps) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
         ServiceCompat.startForeground(this, ID_FIXA, notificacaoFixa("A ligar…"), tipos)
+        shownNotificationText = "A ligar…"
         listenForSteps() // again on every start: the permission may have been granted since the last one
+        armMotionTrigger()
         if (ciclo?.isActive != true) ciclo = lifecycleScope.launch { cicloDeLigacao() }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        getSystemService(SensorManager::class.java).unregisterListener(stepListener)
+        val sensors = getSystemService(SensorManager::class.java)
+        sensors.unregisterListener(stepListener)
+        sensors.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)?.let { sensors.cancelTriggerSensor(motionTrigger, it) }
+        endApproach()
         gravador.terminar(Controlo.estado.value)
         Controlo._estado.value = Estado()
         super.onDestroy()
@@ -155,7 +218,9 @@ class ServicoTrotinete : LifecycleService() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     private fun atualizarNotificacao(texto: String) {
-        if (podeNotificar()) getSystemService(NotificationManager::class.java).notify(ID_FIXA, notificacaoFixa(texto))
+        if (texto == shownNotificationText || !podeNotificar()) return
+        shownNotificationText = texto
+        getSystemService(NotificationManager::class.java).notify(ID_FIXA, notificacaoFixa(texto))
     }
 
     private fun alerta(texto: String) {
@@ -216,15 +281,20 @@ class ServicoTrotinete : LifecycleService() {
             try {
                 t.ligar(passive)
                 ligou = true
+                // The scooter is in range again: if the app locked it, its owner is probably walking up.
+                stayAwakeForApproach("scooter in range")
+                getSystemService(SensorManager::class.java).flush(stepListener) // steps held while asleep
                 passive = false
                 t.login(ltmk)
                 chaveRecusada = 0
+                autoLog.write("link up")
                 Controlo._estado.update { it.copy(ligacao = Ligacao.LIGADA, aviso = null) }
                 sessao(t)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: OutOfRangeException) {
                 // the passive wait is simply re-armed below; nothing happened that the user needs to know
+                if (!passive) autoLog.write("out of range: waiting for the scooter to appear")
             } catch (e: Exception) {
                 android.util.Log.w("Trotinete", "Ligação terminou", e)
                 // Chave recusada várias vezes seguidas = PIN errado: insistir só faz a trotinete bloquear
@@ -237,6 +307,7 @@ class ServicoTrotinete : LifecycleService() {
                     return
                 }
                 switchedOff = e is SwitchedOffException
+                if (ligou) autoLog.write("link down (${if (switchedOff) "switched off" else "lost"}): ${e.message}")
                 val estava = Controlo._estado.value
                 Controlo._estado.update { it.copy(ligacao = Ligacao.SEM_LIGACAO, aviso = e.message, rssi = null) }
                 atualizarNotificacao("Sem ligação · a tentar de novo")
@@ -246,6 +317,7 @@ class ServicoTrotinete : LifecycleService() {
                     else alerta("Perdi a ligação e a trotinete ficou DESBLOQUEADA. Se não a desligaste, volta para perto dela.")
                 }
             } finally {
+                endApproach() // link gone; the next one re-arms it if there is still a lock to undo
                 gravador.terminar(Controlo.estado.value)
                 t.fechar()
             }
@@ -503,6 +575,10 @@ class ServicoTrotinete : LifecycleService() {
                         return
                     }
                     t.set(P.BLOQUEADA, if (c.bloquear) 1 else 0)
+                    autoLog.write(
+                        "${if (c.bloquear) "locked" else "unlocked"} by hand in the app, rssi ${Controlo.estado.value.rssi ?: "?"} dBm" +
+                            if (defs.lockedByProximity) " (undoing an auto-lock)" else "",
+                    )
                     defs.lockedByProximity = false // a lock or unlock by hand is never undone by the app
                     Controlo._estado.update {
                         it.copy(bloqueada = ler(t, P.BLOQUEADA) as? Boolean, bloqueadaPorAfastamento = false, aviso = null)
@@ -538,8 +614,9 @@ class ServicoTrotinete : LifecycleService() {
     /**
      * Watches the signal to lock BEFORE the link drops (afterwards there is no way to send the order)
      * and to unlock when the owner comes back. One RSSI reading every 0.8 s goes into
-     * [ProximityWatcher], which holds all the rules; this method only gathers the inputs and carries
-     * out the decisions. A fresh watcher per connection: a new connection means the owner was away.
+     * [ProximityWatcher], which holds all the rules; this method only gathers the inputs, carries
+     * out the decisions and writes them to [autoLog] with the readings that led to them.
+     * A fresh watcher per connection: a new connection means the owner was away.
      */
     private suspend fun vigiarSinal(t: Trotinete) {
         val watcher = ProximityWatcher {
@@ -549,10 +626,18 @@ class ServicoTrotinete : LifecycleService() {
                 manualThresholdDbm = defs.limiarDbm,
                 adaptiveThreshold = defs.adaptiveThreshold,
                 learnedBaselineDbm = defs.learnedBaselineDbm,
+                besideFloorDbm = defs.besideFloorDbm,
                 weakSeconds = defs.segundos,
                 unlockRequiresPhoneUnlocked = defs.unlockRequiresPhoneUnlocked,
             )
         }
+        val recent = ArrayDeque<String>() // last raw readings, so a logged decision shows what led to it
+        val minute = MinuteSummary()
+        fun context(s: ProximityWatcher.Sample) =
+            "rssi ${watcher.smoothedRssi ?: "?"} dBm, lock below ${watcher.lockThresholdDbm}, unlock above ${watcher.unlockThresholdDbm}, " +
+                "steps ${s.recentSteps}, phone ${if (s.phoneUnlocked) "in hand" else "locked"}${if (s.charging) ", charging" else ""}, " +
+                "last [${recent.joinToString(" ")}]"
+
         while (true) {
             delay(800)
             val e = Controlo.estado.value
@@ -569,22 +654,43 @@ class ServicoTrotinete : LifecycleService() {
                 phoneUnlocked = phoneUnlocked(),
             )
             val decision = watcher.onSample(sample)
+            recent.addLast(sample.rssi?.toString() ?: "x")
+            if (recent.size > 12) recent.removeFirst()
+            minute.add(sample)?.let { autoLog.write("$it, lock below ${watcher.lockThresholdDbm}") }
             Controlo._estado.update { it.copy(rssi = watcher.smoothedRssi ?: it.rssi, lockThresholdDbm = watcher.lockThresholdDbm) }
-            watcher.learnedBaseline?.let { if (it != defs.learnedBaselineDbm) defs.learnedBaselineDbm = it }
+            watcher.learnedBaseline?.let {
+                if (it != defs.learnedBaselineDbm) {
+                    autoLog.write("riding level learnt: ${defs.learnedBaselineDbm ?: "?"} -> $it dBm; lock below ${watcher.lockThresholdDbm}")
+                    defs.learnedBaselineDbm = it
+                }
+            }
 
             when (decision) {
                 is ProximityWatcher.Decision.Lock -> {
-                    Log.i(TAG, "AUTO away (${decision.reason}, rssi=${watcher.smoothedRssi ?: "?"} dBm, threshold=${watcher.lockThresholdDbm}) -> locking")
+                    autoLog.write("away (${decision.reason}): ${context(sample)}")
                     autoBloquear(t, quiet = decision.quiet)
                 }
                 is ProximityWatcher.Decision.Unlock -> try {
                     t.set(P.BLOQUEADA, 0)
                     defs.lockedByProximity = false
                     Controlo._estado.update { it.copy(bloqueada = false, bloqueadaPorAfastamento = false) }
-                    Log.i(TAG, "AUTO back (${decision.reason}, rssi=${watcher.smoothedRssi} dBm) -> unlocked")
+                    autoLog.write("back (${decision.reason}) -> unlocked: ${context(sample)}")
+                    endApproach()
                     alerta("Bem-vindo de volta: desbloqueei a trotinete.")
                 } catch (ex: TrotineteException) {
+                    autoLog.write("back (${decision.reason}) but the unlock failed: ${ex.message}")
                     Controlo._estado.update { it.copy(aviso = ex.message) }
+                }
+                is ProximityWatcher.Decision.LockUndone -> {
+                    defs.besideFloorDbm = decision.besideFloorDbm
+                    val lockBelow = ProximityWatcher.lockThreshold(
+                        defs.limiarDbm, defs.adaptiveThreshold, watcher.learnedBaseline, decision.besideFloorDbm,
+                    )
+                    autoLog.write(
+                        "auto-lock undone by hand with the owner beside it (locked at ${decision.rssiAtLock} dBm): " +
+                            "lock below $lockBelow from now on" + if (defs.adaptiveThreshold) "" else " (learning is off: manual level kept)",
+                    )
+                    if (defs.adaptiveThreshold) alerta(getString(R.string.alert_lock_undone, lockBelow))
                 }
                 ProximityWatcher.Decision.None -> Unit
             }
@@ -607,18 +713,53 @@ class ServicoTrotinete : LifecycleService() {
             try { t.get(P.EM_ANDAMENTO, quick = true).l() != 0L } catch (ex: TrotineteException) { true }
         }
         if (moving) {
-            Log.i(TAG, "AUTO lock skipped: scooter not confirmed stopped (fresh=$fresh)")
+            autoLog.write("lock skipped: scooter not confirmed stopped (fresh=$fresh)")
             return
         }
         try {
             t.set(P.BLOQUEADA, 1)
             defs.lockedByProximity = true
             Controlo._estado.update { it.copy(bloqueada = true, bloqueadaPorAfastamento = true) }
-            Log.i(TAG, "AUTO bloqueada com sucesso")
-            if (!quiet) alerta("Afastaste-te e bloqueei a trotinete. 🔒")
+            autoLog.write("locked${if (quiet) " (quietly: charging)" else ""}")
+            if (!quiet) alerta(getString(R.string.alert_auto_locked))
         } catch (e: TrotineteException) {
-            Log.w(TAG, "AUTO falhou o bloqueio: ${e.message}")
+            autoLog.write("lock failed: ${e.message}")
             alerta("Afastaste-te mas NÃO consegui bloquear a trotinete: ${e.message}")
         }
+    }
+}
+
+/**
+ * The signal over about a minute, for the auto-lock log: what "beside it" and "away" really look
+ * like on this phone, so thresholds can be judged on numbers instead of guesses.
+ */
+private class MinuteSummary {
+    private val readings = mutableListOf<Int>()
+    private var failed = 0
+    private var inHand = 0
+    private var maxSteps = 0
+    private var riding = false
+    private var startedAt = 0L
+
+    /** Adds a sample; about once a minute returns the summary line and starts over. */
+    fun add(s: ProximityWatcher.Sample): String? {
+        if (startedAt == 0L) startedAt = s.now
+        s.rssi?.let { readings += it } ?: failed++
+        if (s.phoneUnlocked) inHand++
+        maxSteps = maxOf(maxSteps, s.recentSteps)
+        riding = riding || s.riding
+        val elapsed = s.now - startedAt
+        if (elapsed < 60_000) return null
+        val sorted = readings.sorted()
+        val signal = if (sorted.isEmpty()) "no readings" else "rssi median ${sorted[sorted.size / 2]} (${sorted.first()}..${sorted.last()})"
+        val line = "${elapsed / 1000} s ${if (riding) "riding" else "parked"}${if (s.locked == true) " locked" else ""}: " +
+            "$signal, $failed failed, steps up to $maxSteps, phone in hand ${inHand * 100 / (readings.size + failed)}%"
+        readings.clear()
+        failed = 0
+        inHand = 0
+        maxSteps = 0
+        riding = false
+        startedAt = s.now
+        return line
     }
 }

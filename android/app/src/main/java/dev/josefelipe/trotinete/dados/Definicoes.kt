@@ -52,6 +52,14 @@ class Definicoes(context: Context) {
         get() = prefs.getInt("learned_baseline_dbm", 0).takeIf { it != 0 }
         set(v) = prefs.edit().putInt("learned_baseline_dbm", v ?: 0).apply()
 
+    /**
+     * Weakest signal (dBm) at which you proved to be beside the scooter, by unlocking by hand a lock
+     * the app had just made; the auto-lock keeps below it. Null until that happens.
+     */
+    var besideFloorDbm: Int?
+        get() = prefs.getInt("beside_floor_dbm", 0).takeIf { it != 0 }
+        set(v) = prefs.edit().putInt("beside_floor_dbm", v ?: 0).apply()
+
     /** Strict auto-unlock: besides being near, the phone must be unlocked and in use. */
     var unlockRequiresPhoneUnlocked: Boolean
         get() = prefs.getBoolean("unlock_requires_phone_unlocked", false)

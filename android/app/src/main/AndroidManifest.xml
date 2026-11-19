@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Step detector: steps while the scooter is parked tell the auto-lock you are walking away -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Keep the CPU awake for a couple of minutes while you walk back to a scooter the app locked -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Aviso de velocidade: vibrar -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Para pedir que o Android não pare a app em segundo plano (bloqueio automático) -->

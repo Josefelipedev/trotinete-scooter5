@@ -11,11 +11,19 @@
 
     <!-- Alerts -->
     <string name="alert_switched_off_unlocked">A trotinete foi desligada pelo botão e ficou desbloqueada. Se não foste tu, vai ver.</string>
+    <string name="alert_auto_locked">Afastaste-te e bloqueei a trotinete. 🔒 Se afinal estás ao pé dela, desbloqueia-a na app e eu aprendo com isso.</string>
+    <string name="alert_lock_undone">Percebido: estavas ao pé da trotinete. A partir de agora só bloqueio com o sinal abaixo de %1$d dBm.</string>
 
     <!-- Proximity auto-lock settings -->
     <string name="auto_lock_adaptive_title">Afinar o limiar sozinha</string>
     <string name="auto_lock_adaptive_desc">Aprende o sinal do teu telemóvel enquanto andas</string>
-    <string name="auto_lock_learned">Ao pé da trotinete o sinal é %1$d dBm · bloqueia abaixo de %2$d dBm</string>
+    <string name="auto_lock_learned">A andar, o sinal é %1$d dBm. A app só usa isto para bloquear mais longe, nunca mais perto do que o limite abaixo.</string>
+    <string name="auto_lock_manual_limit">Limite: nunca bloqueia com sinal acima de %1$d dBm (mais à esquerda = só bloqueia mais longe)</string>
+    <string name="auto_lock_beside_floor">Já desbloqueaste à mão ao pé dela com %1$d dBm: a app não bloqueia com sinal assim.</string>
+    <string name="auto_lock_beside_forget">Esquecer</string>
+    <string name="auto_lock_log_show">Ver o registo do bloqueio automático</string>
+    <string name="auto_lock_log_hide">Esconder o registo</string>
+    <string name="auto_lock_log_empty">O registo ainda está vazio.</string>
     <string name="auto_lock_learning">Ainda a aprender: faz uma viagem com o telemóvel no sítio do costume</string>
     <string name="auto_lock_steps_ok">Também conta os teus passos para perceber que te afastaste</string>
     <string name="auto_lock_steps_missing">Sem permissão de atividade física só usa o sinal. Dá-a nas definições do Android.</string>

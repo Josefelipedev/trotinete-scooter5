@@ -10,7 +10,7 @@ import android.provider.Settings
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import dev.josefelipe.trotinete.R
-import dev.josefelipe.trotinete.servico.ProximityWatcher
+import dev.josefelipe.trotinete.servico.AutoLockLog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -34,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import dev.josefelipe.trotinete.dados.ViagemGps
 import dev.josefelipe.trotinete.dados.RegistoBateria
 import dev.josefelipe.trotinete.dados.Diario
@@ -240,18 +242,31 @@ private fun BloqueioAutomatico(defs: Definicoes, e: Estado) {
     if (adaptive) {
         val baseline = defs.learnedBaselineDbm
         Text(
-            if (baseline != null) stringResource(R.string.auto_lock_learned, baseline, baseline - ProximityWatcher.BASELINE_LOCK_OFFSET_DB)
+            if (baseline != null) stringResource(R.string.auto_lock_learned, baseline)
             else stringResource(R.string.auto_lock_learning),
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    } else {
-        Text("Mais à esquerda = só bloqueia mais longe", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Slider(
-            value = limiar, onValueChange = { limiar = it },
-            onValueChangeFinished = { defs.limiarDbm = limiar.toInt() },
-            valueRange = -100f..-60f, steps = 39,
-        )
+        // Re-read when the service's threshold moves: that is when it may have learnt a new "beside it" level.
+        var besideFloor by remember(e.lockThresholdDbm) { mutableStateOf(defs.besideFloorDbm) }
+        besideFloor?.let { floor ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(R.string.auto_lock_beside_floor, floor),
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { defs.besideFloorDbm = null; besideFloor = null }) {
+                    Text(stringResource(R.string.auto_lock_beside_forget))
+                }
+            }
+        }
     }
+    // The manual level is the ceiling in both modes: learning can only lower it.
+    Text(stringResource(R.string.auto_lock_manual_limit, limiar.toInt()), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Slider(
+        value = limiar, onValueChange = { limiar = it },
+        onValueChangeFinished = { defs.limiarDbm = limiar.toInt() },
+        valueRange = -100f..-60f, steps = 39,
+    )
     Text("Esperar ${segundos.toInt()} s de sinal fraco antes de bloquear", fontSize = 13.sp)
     Slider(
         value = segundos, onValueChange = { segundos = it },
@@ -273,6 +288,30 @@ private fun BloqueioAutomatico(defs: Definicoes, e: Estado) {
         }
     }
     if (e.bloqueadaPorAfastamento) Text("🔒 Bloqueada pela app porque te afastaste", color = Verde, fontSize = 13.sp)
+    AutoLockLogView()
+}
+
+/** The auto-lock's own log (newest first), so "why did it lock?" can be answered on the spot. */
+@Composable
+private fun AutoLockLogView() {
+    var open by remember { mutableStateOf(false) }
+    TextButton(onClick = { open = !open }) {
+        Text(stringResource(if (open) R.string.auto_lock_log_hide else R.string.auto_lock_log_show))
+    }
+    if (!open) return
+    val context = LocalContext.current
+    val lines by produceState(emptyList<String>()) {
+        val log = AutoLockLog(context)
+        while (true) {
+            value = withContext(Dispatchers.IO) { log.latest(80) }
+            delay(3_000)
+        }
+    }
+    if (lines.isEmpty()) {
+        Text(stringResource(R.string.auto_lock_log_empty), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+        Text(lines.joinToString("\n"), fontSize = 10.sp, lineHeight = 13.sp, fontFamily = FontFamily.Monospace)
+    }
 }
 
 // --- Detalhes ---

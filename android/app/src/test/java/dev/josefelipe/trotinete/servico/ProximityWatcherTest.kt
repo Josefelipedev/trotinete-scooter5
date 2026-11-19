@@ -17,6 +17,7 @@ class ProximityWatcherTest {
         manualThresholdDbm = -78,
         adaptiveThreshold = false,
         learnedBaselineDbm = null,
+        besideFloorDbm = null,
         weakSeconds = 6,
         unlockRequiresPhoneUnlocked = false,
     )
@@ -66,10 +67,12 @@ class ProximityWatcherTest {
     }
 
     @Test
-    fun walkingAwayWithStepsLocksBeforeTheSignalIsWeak() {
+    fun walkingAwayWithStepsLocksWithoutWaiting() {
         feed(5) { sample(-66) }
-        // -74 is above the -78 threshold: alone it would never lock, but with 12 steps it does
-        val lock = feed(3) { sample(-74, steps = 12) }
+        // walking around beside it: steps, but the signal is still above the -78 threshold
+        assertEquals(Decision.None, feed(10) { sample(-74, steps = 12) })
+        // once below it (a gentle decline, not a sudden drop), the steps say "leaving": no need to wait the 6 s of weak signal
+        val lock = feed(2) { sample(-80, steps = 12) }
         assertTrue(lock is Decision.Lock && "walking away" in lock.reason)
     }
 
@@ -125,6 +128,47 @@ class ProximityWatcherTest {
         assertTrue(d is Decision.Unlock && (d as Decision.Unlock).reason == "signal rising")
     }
 
+    /** The phone slept: no readings, and no steps reported, for [ms]. */
+    private fun sleep(ms: Long) {
+        now += ms
+    }
+
+    @Test
+    fun comingBackWhileThePhoneSleptUnlocksOnTheWholeClimb() {
+        // the link comes up at the edge of range, then the phone sleeps through the walk back and only
+        // sees the flat end: no rise inside the 6 s window, no steps, but -88 -> -66 is the walk itself
+        feed(2) { sample(-88, locked = true, lockedByUs = true) }
+        sleep(40_000)
+        assertEquals(Decision.None, feed(2) { sample(-66, locked = true, lockedByUs = true) })
+        sleep(7_000) // past the 6 s trend window: the old rule sees a flat -66
+        val d = feed(3) { sample(-66, locked = true, lockedByUs = true) }
+        assertTrue(d is Decision.Unlock && "came back into range" in (d as Decision.Unlock).reason)
+    }
+
+    @Test
+    fun theClimbSinceTheLinkCameUpOnlyCountsForTwoMinutes() {
+        feed(2) { sample(-88, locked = true, lockedByUs = true) }
+        sleep(ProximityWatcher.ARRIVAL_WINDOW_MS + 10_000)
+        feed(2) { sample(-66, locked = true, lockedByUs = true) }
+        sleep(7_000)
+        assertEquals(Decision.None, feed(10) { sample(-66, locked = true, lockedByUs = true) })
+    }
+
+    @Test
+    fun aLockMadeOnThisLinkIsNotUndoneAsAComeBack() {
+        // locked here; the owner never left the link, so its weakest reading is not "where they came
+        // from": a slow climb (never 6 dB inside 6 s) without steps must not unlock
+        feed(5) { sample(-66) }
+        assertTrue(feed(10) { sample(-85) } is Decision.Lock)
+        feed(3) { sample(-85, locked = true, lockedByUs = true) }
+        for (level in listOf(-80, -75)) {
+            sleep(10_000)
+            feed(3) { sample(level, locked = true, lockedByUs = true) }
+        }
+        sleep(10_000)
+        assertEquals(Decision.None, feed(10) { sample(-71, locked = true, lockedByUs = true) })
+    }
+
     @Test
     fun strongButSteadySignalWithoutStepsDoesNotUnlock() {
         // "scooter outside the shop window": good signal, nobody walking towards it
@@ -167,9 +211,10 @@ class ProximityWatcherTest {
 
     @Test
     fun aLockTriggeredByStepsIsNotUndoneByTheSameSteps() {
-        feed(5) { sample(-66) }
-        assertTrue(feed(3) { sample(-74, steps = 12) } is Decision.Lock)
-        // owner keeps walking just 5 m away: signal still decent, steps still recent. Must stay locked.
+        feed(5) { sample(-74) }
+        assertTrue(feed(3) { sample(-80, steps = 12) } is Decision.Lock)
+        // the signal bounces back a little while the owner keeps walking, steps still recent: the
+        // readings from before the lock still in the median must not count as "went away". Stays locked.
         assertEquals(Decision.None, feed(10) { sample(-72, locked = true, lockedByUs = true, steps = 12) })
         // ...until they really go away and come back
         feed(3) { sample(-84, locked = true, lockedByUs = true) }
@@ -178,8 +223,8 @@ class ProximityWatcherTest {
 
     @Test
     fun standingRightBesideItUnlocksEvenWithoutHavingGoneFar() {
-        feed(5) { sample(-66) }
-        assertTrue(feed(3) { sample(-74, steps = 12) } is Decision.Lock)
+        feed(5) { sample(-74) }
+        assertTrue(feed(3) { sample(-80, steps = 12) } is Decision.Lock)
         // -66 is unlock level (-74) + 6 or better: the owner is clearly beside it again
         assertTrue(feed(6) { sample(-66, locked = true, lockedByUs = true, steps = 6) } is Decision.Unlock)
     }
@@ -193,8 +238,101 @@ class ProximityWatcherTest {
         feed(12) { sample(-68, stopped = false, riding = true) }
         sample(-68) // ride over
         assertEquals(-68, watcher.learnedBaseline)
-        assertEquals(-80, watcher.lockThresholdDbm)
+        // a weak riding level (phone in a bag) lowers the -78 manual level to 20 dB below it
+        assertEquals(-88, watcher.lockThresholdDbm)
         assertEquals(-72, watcher.unlockThresholdDbm)
+    }
+
+    @Test
+    fun aStrongRidingLevelNeverRaisesTheManualThreshold() {
+        // the real case: -56 dBm on the scooter used to mean "lock below -68", and beside a parked
+        // scooter the phone reads -70 to -80. The hand-tuned -81 stays in charge.
+        settings = settings.copy(adaptiveThreshold = true, learnedBaselineDbm = -56, manualThresholdDbm = -81)
+        sample(-70)
+        assertEquals(-81, watcher.lockThresholdDbm)
+        assertEquals(-60, watcher.unlockThresholdDbm)
+    }
+
+    @Test
+    fun learningNeverPushesTheThresholdPastTheLinkLimit() {
+        assertEquals(-88, ProximityWatcher.lockThreshold(manual = -78, adaptive = true, baseline = -80, besideFloor = null))
+        assertEquals(-88, ProximityWatcher.lockThreshold(manual = -78, adaptive = true, baseline = null, besideFloor = -86))
+        // a manual level below the limit is the owner's choice and stays
+        assertEquals(-92, ProximityWatcher.lockThreshold(manual = -92, adaptive = true, baseline = -60, besideFloor = null))
+        assertEquals(-78, ProximityWatcher.lockThreshold(manual = -78, adaptive = false, baseline = -80, besideFloor = -86))
+    }
+
+    @Test
+    fun walkingAroundBesideTheParkedScooterWithThePhoneDoesNotLock() {
+        // 17 Nov 2026: app open, scooter beside the owner, and it locked within 30 s
+        settings = settings.copy(adaptiveThreshold = true, learnedBaselineDbm = -56, manualThresholdDbm = -81, weakSeconds = 5)
+        var i = 0
+        val levels = listOf(-66, -71, -74, -69, -78, -72, -80, -70)
+        assertEquals(Decision.None, feed(60) { sample(levels[i++ % levels.size], steps = 15, phoneUnlocked = true) })
+    }
+
+    @Test
+    fun standingStillWithThePhoneInHandDoesNotLockOnAWeakSignal() {
+        // looking at the app at the edge of the garage: weak, but nobody is walking away
+        assertEquals(Decision.None, feed(20) { sample(-85, phoneUnlocked = true) })
+        // phone back in the pocket: the weak signal counts again
+        val lock = feed(10) { sample(-85) }
+        assertTrue(lock is Decision.Lock && lock.reason.startsWith("weak"))
+    }
+
+    @Test
+    fun aLockUndoneByHandBesideTheScooterLowersTheThreshold() {
+        settings = settings.copy(adaptiveThreshold = true)
+        assertTrue(feed(10) { sample(-82) } is Decision.Lock)
+        feed(5) { sample(-82, locked = true, lockedByUs = true) }
+        // the owner taps "Unlock": they were right there
+        val d = sample(-81, locked = false)
+        assertEquals(Decision.LockUndone(rssiAtLock = -82, besideFloorDbm = -82), d)
+        assertEquals(-82, watcher.besideFloor)
+        sample(-82)
+        assertEquals(-88, watcher.lockThresholdDbm)
+        // and the same signal no longer locks, even after the grace period
+        sleep(ProximityWatcher.GRACE_AFTER_HAND_UNLOCK_MS)
+        assertEquals(Decision.None, feed(20) { sample(-82) })
+    }
+
+    @Test
+    fun forgettingTheBesideLevelInSettingsTakesEffectAtOnce() {
+        settings = settings.copy(adaptiveThreshold = true, besideFloorDbm = -82)
+        sample(-70)
+        assertEquals(-88, watcher.lockThresholdDbm)
+        settings = settings.copy(besideFloorDbm = null)
+        sample(-70)
+        assertEquals(-78, watcher.lockThresholdDbm)
+    }
+
+    @Test
+    fun aLockUndoneAfterGoingFartherTeachesNothing() {
+        settings = settings.copy(adaptiveThreshold = true)
+        assertTrue(feed(10) { sample(-82) } is Decision.Lock)
+        feed(5) { sample(-90, locked = true, lockedByUs = true) } // kept walking: it was a real lock
+        feed(5) { sample(-75, locked = true, lockedByUs = true) }
+        assertEquals(Decision.None, sample(-75, locked = false))
+        assertNull(watcher.besideFloor)
+    }
+
+    @Test
+    fun aLockUndoneLongAfterTeachesNothing() {
+        settings = settings.copy(adaptiveThreshold = true)
+        assertTrue(feed(10) { sample(-82) } is Decision.Lock)
+        feed(5) { sample(-82, locked = true, lockedByUs = true) }
+        sleep(ProximityWatcher.UNDO_WINDOW_MS)
+        assertEquals(Decision.None, sample(-82, locked = false))
+        assertNull(watcher.besideFloor)
+    }
+
+    @Test
+    fun aHandUnlockHoldsTheAutoLockOff() {
+        // locked by hand, then unlocked by hand from the window: the owner is right there
+        feed(3) { sample(-85, locked = true) }
+        assertEquals(Decision.None, sample(-85, locked = false))
+        assertEquals(Decision.None, feed(70) { sample(-85) }) // 56 s
+        assertTrue(feed(15) { sample(-85) } is Decision.Lock)
     }
 
     @Test
@@ -230,5 +368,13 @@ class ProximityWatcherTest {
         assertEquals(2, w.countSince(now = 25_000, windowMs = 20_000))
         assertEquals(1, w.countSince(now = 30_000, windowMs = 10_000))
         assertFalse(w.countSince(now = 60_000, windowMs = 20_000) > 0)
+    }
+
+    @Test
+    fun stepWindowDropsOldStepsThatArrivedLate() {
+        val w = StepWindow()
+        w.step(50_000)
+        w.step(10_000) // held by the sensor while the phone slept, delivered after a newer one
+        assertEquals(1, w.countSince(now = 55_000, windowMs = 20_000))
     }
 }
